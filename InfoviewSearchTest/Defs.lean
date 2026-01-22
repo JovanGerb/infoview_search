@@ -1,6 +1,6 @@
 module
 
-public import InfoviewSearch.InfoviewSearch
+public import InfoviewSearch
 public import ProofWidgets.Component.HtmlDisplay
 
 /-!
