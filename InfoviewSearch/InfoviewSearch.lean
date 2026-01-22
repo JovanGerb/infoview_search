@@ -7,11 +7,12 @@ public import InfoviewSearch.ApplyAt
 public import InfoviewSearch.Tactics
 public meta import Mathlib.Lean.GoalsLocation
 public meta import Mathlib.Lean.Meta.KAbstractPositions
+public import ProofWidgets.Component.FilterDetails
 
 
 public meta section
 
-namespace InfoviewSuggest
+namespace InfoviewSearch
 open Lean Meta Server Widget ProofWidgets Jsx Mathlib Tactic RefinedDiscrTree
 
 inductive SectionState where
@@ -214,9 +215,38 @@ partial def waitAndRefresh (state : WidgetState) (pre : Array Html)
     state ← updateWidgetState state
     refresh (renderWidget state pre rewriteTarget)
 
+def generateSuggestions (loc : SubExpr.GoalsLocation) («meta» : DocumentMeta)
+    (cursorPos : Lsp.Position) (onGoal : Option Nat) (stx : Syntax) (parentDecl? : Option Name) :
+    RefreshT MetaM Unit := do
+  let decl ← loc.mvarId.getDecl
+  let lctx := decl.lctx |>.sanitizeNames.run' {options := (← getOptions)}
+  Meta.withLCtx lctx decl.localInstances do
+  let rootExpr ← loc.rootExpr
+  -- TODO: instead of rejecting terms with bound variables, and rejecting terms with a bad motive,
+  -- use `simp_rw` as the suggested tactic instead of `rw`.
+  -- TODO: instead of computing the occurrences a single time (i.e. the `n` in `nth_rw n`),
+  -- compute the occurrence for each suggestion separately, to avoid inaccuracies.
+  let pos := { root := rootExpr, targetPos := loc.pos }
+  let some (subExpr, occ) ← withReducible <| viewKAbstractSubExpr rootExpr loc.pos |
+    refresh <| .text "infoview_search: expressions with bound variables are not yet supported"
+  unless ← kabstractIsTypeCorrect rootExpr subExpr loc.pos do
+    refresh <| .text "infoview_search: the selected expression cannot be rewritten, \
+      because the motive is not type correct. \
+      This usually occurs when trying to rewrite a term that appears as a dependent argument."
+    return
+  let location ← loc.fvarId?.mapM (·.getUserName)
+  let pasteInfo :=
+    { «meta», cursorPos, occ, hyp? := location, onGoal, stx }
+  let state ← initializeWidgetState subExpr pasteInfo pos loc.fvarId? parentDecl?
+  -- Computing the tactic suggestions is cheap enough that it doesn't need a separate thread.
+  -- However, we do this after the parallel computations
+  -- have already been spawned by `initializeWidgetState`.
+  RefreshComponent.refresh <| .text "searching for applicable tactics.."
+  let pre ← renderTactic subExpr occ location loc pasteInfo.toPasteInfo
+  waitAndRefresh state pre (← ppExprTagged subExpr)
 
 @[server_rpc_method]
-def suggestionWidget (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
+def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
   RequestM.asTask do
   let some loc := props.selectedLocations.back? | return .text ""
   let doc ← RequestM.readDoc
@@ -234,38 +264,13 @@ def suggestionWidget (props : CancelPanelWidgetProps) : RequestM (RequestTask Ht
       goals.contains loc.mvarId
     | return .text "infoview_search: Please reload the tactic state"
   goal.ctx.val.runMetaM {} do
-  mkCancelRefreshComponent props.cancelTkRef.val (.text "searching for suggestions..") do
-    let decl ← loc.mvarId.getDecl
-    let lctx := decl.lctx |>.sanitizeNames.run' {options := (← getOptions)}
-    Meta.withLCtx lctx decl.localInstances do
-    let rootExpr ← loc.rootExpr
-    -- TODO: instead of rejecting terms with bound variables, and rejecting terms with a bad motive,
-    -- use `simp_rw` as the suggested tactic instead of `rw`.
-    -- TODO: instead of computing the occurrences a single time (i.e. the `n` in `nth_rw n`),
-    -- compute the occurrence for each suggestion separately, to avoid inaccuracies.
-    let pos := { root := rootExpr, targetPos := loc.pos }
-    let some (subExpr, occ) ← withReducible <| viewKAbstractSubExpr rootExpr loc.pos |
-      refresh <| .text "infoview_search: expressions with bound variables are not yet supported"
-    unless ← kabstractIsTypeCorrect rootExpr subExpr loc.pos do
-      refresh <| .text "infoview_search: the selected expression cannot be rewritten, \
-        because the motive is not type correct. \
-        This usually occurs when trying to rewrite a term that appears as a dependent argument."
-      return
-    let location ← loc.fvarId?.mapM (·.getUserName)
-    let pasteInfo :=
-      { «meta» := doc.meta, cursorPos := props.pos, occ, hyp? := location, onGoal, stx }
-    let state ← initializeWidgetState subExpr pasteInfo pos loc.fvarId? parentDecl?
-    -- Computing the tactic suggestions is cheap enough that it doesn't need a separate thread.
-    -- However, we do this after the parallel computations
-    -- have already been spawned by `initializeWidgetState`.
-    RefreshComponent.refresh <| .text "searching for applicable tactics.."
-    let pre ← renderTactic subExpr occ location loc pasteInfo.toPasteInfo
-    waitAndRefresh state pre (← ppExprTagged subExpr)
+  mkCancelRefreshComponent props.cancelTkRef.val (.text "searching for suggestions..") <|
+    generateSuggestions loc doc.meta props.pos onGoal stx parentDecl?
 
 /-- The component called by the `rw!?` tactic -/
 @[widget_module]
-def InfoviewSuggestComponent : Component CancelPanelWidgetProps :=
-  mk_rpc_widget% suggestionWidget
+def infoviewSearchComponent : Component CancelPanelWidgetProps :=
+  mk_rpc_widget% rpc
 
 
 private def withTreeCtx (ctx : Core.Context) : Core.Context :=
@@ -320,8 +325,8 @@ elab "#infoview_search" : command => do
 
   let ref ← WithRpcRef.mk (← IO.mkRef (← IO.CancelToken.new))
   addPanelWidgetLocal {
-    javascriptHash := InfoviewSuggestComponent.javascriptHash
-    id := ``InfoviewSuggestComponent
+    javascriptHash := infoviewSearchComponent.javascriptHash
+    id := ``infoviewSearchComponent
     props := (return json% { cancelTkRef : $(← rpcEncode ref)}) }
 
-end InfoviewSuggest
+end InfoviewSearch

@@ -10,7 +10,7 @@ public import Batteries.Tactic.PermuteGoals
 
 public meta section
 
-namespace InfoviewSuggest
+namespace InfoviewSearch
 
 open Lean Meta Widget ProofWidgets Jsx Server
 
@@ -161,7 +161,7 @@ def mkSuggestionElement (tac : TSyntax `tactic) (pasteInfo : PasteInfo)
   let (tactic, replaceRange) ← (do
     if let some tac ← mergeTactics? pasteInfo.stx tac then
       if let some range := pasteInfo.stx.getRange? then
-        let { text, .. } := pasteInfo.meta
+        let text := pasteInfo.meta.text
         let endPos := max (text.lspPosToUtf8Pos pasteInfo.cursorPos) range.stop
         let extraWhitespace := range.stop.extract text.source endPos
         let tactic ← tacticPasteString tac pasteInfo
@@ -234,7 +234,7 @@ def kabstractFindsPositions (p : Expr) (pos : ExprWithPos) : MetaM Bool := do
   | .ok () => throwError "invalid position {targetPos} in {e}"
   | .error found => return found
 
-end InfoviewSuggest
+end InfoviewSearch
 
 section MonadDrop
 

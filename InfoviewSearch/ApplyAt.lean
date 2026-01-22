@@ -4,7 +4,7 @@ public import InfoviewSearch.Util
 
 public meta section
 
-namespace InfoviewSuggest.ApplyAt
+namespace InfoviewSearch.ApplyAt
 open Lean Meta RefinedDiscrTree Widget Server ProofWidgets Jsx
 
 
@@ -302,4 +302,4 @@ def renderSection (filter : Bool) (s : SectionState) : Option Html := do
   return mkListElement htmls
     <span> apply at: <InteractiveCode fmt={head.pattern}/> {.text suffix} </span>
 
-end InfoviewSuggest.ApplyAt
+end InfoviewSearch.ApplyAt

@@ -7,7 +7,6 @@ module
 
 public import Mathlib.Lean.Meta.RefinedDiscrTree
 public import InfoviewSearch.RefreshComponent
-public import ProofWidgets.Component.FilterDetails
 
 /-!
 # Point & click library rewriting
@@ -61,7 +60,7 @@ Ways to extend `rw!?`:
 
 public meta section
 
-namespace InfoviewSuggest.Rw
+namespace InfoviewSearch.Rw
 
 open Lean Meta RefinedDiscrTree
 
@@ -167,7 +166,8 @@ def getImportCandidates (e : Expr) : MetaM (MatchResult RewriteLemma) := do
 
 /-- Get all potential rewrite lemmas from the current file. Exclude lemmas from modules
 in the `librarySearch.excludedModules` option. -/
-def getModuleCandidates (e : Expr) (parentDecl? : Option Name) : MetaM (MatchResult RewriteLemma) := do
+def getModuleCandidates (e : Expr) (parentDecl? : Option Name) :
+    MetaM (MatchResult RewriteLemma) := do
   let moduleTreeRef ← createModuleTreeRef fun name cinfo ↦
     if name == parentDecl? then return [] else addRewriteEntry name cinfo
   findModuleMatches moduleTreeRef e
@@ -437,4 +437,4 @@ def renderSection (filter : Bool) (s : SectionState) : Option Html := do
   guard (!htmls.isEmpty)
   return mkListElement htmls <span> rw: <InteractiveCode fmt={head.pattern}/> {.text suffix} </span>
 
-end InfoviewSuggest.Rw
+end InfoviewSearch.Rw

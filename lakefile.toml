@@ -18,3 +18,7 @@ rev = "v4.26.0"
 
 [[lean_lib]]
 name = "InfoviewSearch"
+
+[[lean_lib]]
+name = "InfoviewSearchTest"
+globs = ["InfoviewSearchTest.+"]

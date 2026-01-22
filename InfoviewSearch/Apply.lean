@@ -4,7 +4,7 @@ public import InfoviewSearch.Util
 
 public meta section
 
-namespace InfoviewSuggest.Apply
+namespace InfoviewSearch.Apply
 open Lean Meta RefinedDiscrTree Widget Server ProofWidgets Jsx
 
 structure ApplyLemma where
@@ -285,4 +285,4 @@ def renderSection (filter : Bool) (s : SectionState) : Option Html := do
   return mkListElement htmls
     <span> apply: <InteractiveCode fmt={head.pattern}/> {.text suffix} </span>
 
-end InfoviewSuggest.Apply
+end InfoviewSearch.Apply

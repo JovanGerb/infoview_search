@@ -4,7 +4,7 @@ public import InfoviewSearch.Unfold
 
 public meta section
 
-namespace InfoviewSuggest
+namespace InfoviewSearch
 
 open Lean Meta ProofWidgets
 
@@ -91,4 +91,4 @@ def renderTactic (e : Expr) (occ : Option Nat) (location : Option Name)
     htmls := htmls.push html
   return htmls
 
-end InfoviewSuggest
+end InfoviewSearch

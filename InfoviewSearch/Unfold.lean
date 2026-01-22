@@ -55,7 +55,7 @@ public meta section
 
 open Lean Meta Server Widget ProofWidgets Jsx
 
-namespace InfoviewSuggest.InteractiveUnfold
+namespace InfoviewSearch.InteractiveUnfold
 
 set_option linter.style.emptyLine false in
 /-- Unfold a class projection if the instance is tagged with `@[default_instance]`.
@@ -143,4 +143,4 @@ def renderUnfolds (e : Expr) (occ : Option Nat) (loc : Option Name) (pasteInfo :
     mkSuggestionElement tactic pasteInfo <InteractiveCode fmt={← ppExprTagged unfold}/>
   return mkListElement (startOpen := false) htmls <| .text "unfold"
 
-end InfoviewSuggest.InteractiveUnfold
+end InfoviewSearch.InteractiveUnfold

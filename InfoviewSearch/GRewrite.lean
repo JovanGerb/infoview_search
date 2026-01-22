@@ -7,11 +7,10 @@ module
 
 public import Mathlib.Lean.Meta.RefinedDiscrTree
 public import InfoviewSearch.RefreshComponent
-public import ProofWidgets.Component.FilterDetails
 
 public meta section
 
-namespace InfoviewSuggest.Grw
+namespace InfoviewSearch.Grw
 
 /-! ### Caching -/
 
@@ -65,6 +64,8 @@ structure GRewritePos where
   relation : Expr
   relName : Name
   symm : Bool
+
+-- TODO: when the relation is symmetric, then look up both directions in the discr tree.
 
 /-- Get all potential rewrite lemmas from the imported environment.
 By setting the `librarySearch.excludedModules` option, all lemmas from certain modules
@@ -290,9 +291,10 @@ def Rewrite.toResult (rw : Rewrite) (pasteInfo : RwPasteInfo) : MetaM RwResult :
 where
   /-- Render the matching side of the rewrite lemma.
   This is shown at the header of each section of rewrite results. -/
-  pattern (type : Expr) : MetaM CodeWithInfos := do
+  pattern (type : Expr) : MetaM CodeWithInfos := withReducible do
     forallTelescopeReducing type fun _ e => do
-      let .app (.app _ lhs) rhs ← whnf e | throwError "Expected relation, not {indentExpr e}"
+      let .app (.app _ lhs) rhs := (← instantiateMVars e).cleanupAnnotations
+        | throwError "Expected relation, not {indentExpr e}"
       ppExprTagged <| if rw.symm then rhs else lhs
 
 /-- `generateSuggestion` is called in parallel for all rewrite lemmas.
@@ -381,58 +383,4 @@ def renderSection (filter : Bool) (s : SectionState) : Option Html := do
   return mkListElement htmls
     <span> grw: <InteractiveCode fmt={head.pattern}/> {.text suffix} </span>
 
-/-- When the rewrite results are computed, `WidgetState` is used to keep track of the progress.
-Initially, it contains a bunch of unfinished `Task`s, and with each round of `updateWidgetState`,
-the finished tasks are stored as results in each `SectionState`. -/
-structure WidgetState where
-  /-- The states of the sections in the widget. -/
-  sections : Array SectionState
-  /-- The errors that appeared in evaluating. -/
-  exceptions : Array Html
-  /-- The HTML shown at the top of the suggestions. -/
-  header : Html
-
-/-- Look a all of the pending `Task`s and if any of them gave a result, add this to the state. -/
-def updateWidgetState (state : WidgetState) : MetaM WidgetState := do
-  let mut sections := #[]
-  let mut exceptions := state.exceptions
-  for s in state.sections do
-    let (exs, s) ← updateSectionState s
-    sections := sections.push s
-    exceptions := exceptions ++ exs
-  return { state with sections, exceptions }
-
-def renderWidget (state : WidgetState) (unfolds? : Option Html)
-    (rewriteTarget : CodeWithInfos) : Html :=
-  <FilterDetails
-    summary={state.header}
-    all={render false state unfolds? rewriteTarget}
-    filtered={render true state unfolds? rewriteTarget}
-    initiallyFiltered={true} />
-where
-  /-- Render all of the sections of rewrite results -/
-  render (filter : Bool) (state : WidgetState) (unfolds? : Option Html)
-      (rewriteTarget : CodeWithInfos) : Html :=
-    let htmls := state.sections.filterMap (renderSection filter)
-    let htmls := match unfolds? with
-      | some html => #[html] ++ htmls
-      | none => htmls
-    let htmls := match renderExceptions state.exceptions with
-      | some html => htmls.push html
-      | none => htmls
-    if htmls.isEmpty then
-      <p> No rewrites found for <InteractiveCode fmt={rewriteTarget}/> </p>
-    else
-      .element "div" #[("style", json% {"marginLeft" : "4px"})] htmls
-  /-- Render the error messages -/
-  renderExceptions (exceptions : Array Html) : Option Html := do
-    if exceptions.isEmpty then none else
-    some <|
-      <details «open»={true}>
-        <summary className="mv2 pointer">
-          <span «class»="error"> Error messages: </span>
-        </summary>
-        {Html.element "ul" #[("style", json% { "padding-left" : "30px"})] exceptions}
-      </details>
-
-end InfoviewSuggest.Grw
+end InfoviewSearch.Grw
