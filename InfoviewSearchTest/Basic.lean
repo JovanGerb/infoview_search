@@ -5,7 +5,7 @@ import Mathlib.Data.Nat.ModEq
 import InfoviewSearchTest.Defs
 
 /-!
-This file tests some basic features of `#infoview_suggest`
+This file tests some basic features of `#infoview_search`
 -/
 
 set_option linter.hashCommand false
@@ -53,3 +53,4 @@ example {p q r : Prop} (h₁ : p → q → r) (h₂ : p → q) (h₃ : p) : r :=
   search_test h₃ "" => "apply h₂ at h₃\n  "
   -- TODO: make this work:
   -- search_test h₁ "/1/0" => "apply_rw [← h₂]\n  "
+  exact test_sorry

@@ -114,14 +114,14 @@ def checkApplication (lem : ApplyAtLemma) (target : Expr) : MetaM (Option Applic
   let thm ← match lem.name with
     | .const name => mkConstWithFreshMVarLevels name
     | .fvar fvarId => pure (.fvar fvarId)
-  withTraceNodeBefore `infoview_suggest (return m!"applying {thm} to {target}") do
+  withTraceNodeBefore `infoview_search (return m!"applying {thm} to {target}") do
   let (mvars, binderInfos, replacement) ← forallMetaTelescopeReducing (← inferType thm)
   let e ← inferType mvars.back!
   let mvars := mvars.pop
-  let unifies ← withTraceNodeBefore `infoview_suggest (return m! "unifying {e} =?= {target}")
+  let unifies ← withTraceNodeBefore `infoview_search (return m! "unifying {e} =?= {target}")
     (withReducible (isDefEq e target))
   unless unifies do return none
-  try synthAppInstances `infoview_suggest default mvars binderInfos false false
+  try synthAppInstances `infoview_search default mvars binderInfos false false
   catch _ => return none
   let mut newGoals := #[]
   for mvar in mvars, bi in binderInfos do
@@ -227,7 +227,7 @@ def generateSuggestion (expr : Expr) (pasteInfo : RwPasteInfo) (lem : ApplyAtLem
   BaseIO.asTask <| EIO.catchExceptions (← dropM do withCurrHeartbeats do
     have : MonadExceptOf _ MetaM := MonadAlwaysExcept.except
     try .ok <$> withNewMCtxDepth do
-      Core.checkSystem "infoview_suggest"
+      Core.checkSystem "infoview_search"
       let some app ← checkApplication lem expr | return none
       some <$> app.toResult pasteInfo
     catch e => withCurrHeartbeats do

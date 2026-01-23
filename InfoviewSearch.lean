@@ -4,6 +4,7 @@ public import InfoviewSearch.Apply
 public import InfoviewSearch.Rewrite
 public import InfoviewSearch.GRewrite
 public import InfoviewSearch.ApplyAt
+public meta import InfoviewSearch.Initialize
 public import InfoviewSearch.Tactics
 public meta import Mathlib.Lean.GoalsLocation
 public meta import Mathlib.Lean.Meta.KAbstractPositions
@@ -267,7 +268,7 @@ def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
   mkCancelRefreshComponent props.cancelTkRef.val (.text "searching for suggestions..") <|
     generateSuggestions loc doc.meta props.pos onGoal stx parentDecl?
 
-/-- The component called by the `rw!?` tactic -/
+/-- The component called by the `#infoview_search` command. -/
 @[widget_module]
 def infoviewSearchComponent : Component CancelPanelWidgetProps :=
   mk_rpc_widget% rpc
@@ -287,18 +288,18 @@ elab "#infoview_search" : command => do
       let (cNGen, ngen) := ngen.mkChild
       setNGen ngen
       withTheReader Core.Context withTreeCtx do
-          createImportedDiscrTree cNGen (← getEnv) Rw.addRewriteEntry 5000 256
+        createImportedDiscrTree' cNGen (← getEnv) Rw.addRewriteEntry 5000
     ref.set tree
 
   have : Inhabited (IO.Ref (Option (RefinedDiscrTree Grw.GRewriteLemma))) := ⟨← IO.mkRef none⟩
-  let ref := Rw.importedRewriteLemmasExt.getState (← getEnv)
+  let ref := Grw.importedRewriteLemmasExt.getState (← getEnv)
   if (← ref.get).isNone then
     let tree ← Elab.Command.liftCoreM do
       let ngen ← getNGen
       let (cNGen, ngen) := ngen.mkChild
       setNGen ngen
       withTheReader Core.Context withTreeCtx do
-          createImportedDiscrTree cNGen (← getEnv) Rw.addRewriteEntry 5000 256
+        createImportedDiscrTree' cNGen (← getEnv) Grw.addGRewriteEntry 5000
     ref.set tree
 
   have : Inhabited (IO.Ref (Option (RefinedDiscrTree Apply.ApplyLemma))) := ⟨← IO.mkRef none⟩
@@ -309,7 +310,7 @@ elab "#infoview_search" : command => do
       let (cNGen, ngen) := ngen.mkChild
       setNGen ngen
       withTheReader Core.Context withTreeCtx do
-          createImportedDiscrTree cNGen (← getEnv) Apply.addApplyEntry 5000 256
+        createImportedDiscrTree' cNGen (← getEnv) Apply.addApplyEntry 5000
     ref.set tree
 
   have : Inhabited (IO.Ref (Option (RefinedDiscrTree ApplyAt.ApplyAtLemma))) := ⟨← IO.mkRef none⟩
@@ -320,7 +321,7 @@ elab "#infoview_search" : command => do
       let (cNGen, ngen) := ngen.mkChild
       setNGen ngen
       withTheReader Core.Context withTreeCtx do
-          createImportedDiscrTree cNGen (← getEnv) ApplyAt.addApplyAtEntry 5000 256
+        createImportedDiscrTree' cNGen (← getEnv) ApplyAt.addApplyAtEntry 5000
     ref.set tree
 
   let ref ← WithRpcRef.mk (← IO.mkRef (← IO.CancelToken.new))

@@ -15,7 +15,7 @@ namespace InfoviewSearch
 open Lean Meta Widget ProofWidgets Jsx Server
 
 initialize
-  registerTraceClass `infoview_suggest
+  registerTraceClass `infoview_search
 
 /-- Determine whether the match `e` is too generic to be useful for insertion in
 a discrimination tree of all imported theorems. -/

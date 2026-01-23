@@ -227,13 +227,13 @@ def checkRewrite (lem : RewriteLemma) (e : Expr) (pos : ExprWithPos) : MetaM (Op
   let thm ← match lem.name with
     | .const name => mkConstWithFreshMVarLevels name
     | .fvar fvarId => pure (.fvar fvarId)
-  withTraceNodeBefore `infoview_suggest (return m!
+  withTraceNodeBefore `infoview_search (return m!
     "rewriting {e} by {if lem.symm then "← " else ""}{thm}") do
   let (mvars, binderInfos, eqn) ← forallMetaTelescopeReducing (← inferType thm)
   let some (lhs, rhs) := eqOrIff? (← whnf eqn) | return none
   let (lhs, rhs) := if lem.symm then (rhs, lhs) else (lhs, rhs)
   let lhsOrig := lhs; let mctxOrig ← getMCtx
-  let unifies ← withTraceNodeBefore `infoview_suggest (return m! "unifying {e} =?= {lhs}")
+  let unifies ← withTraceNodeBefore `infoview_search (return m! "unifying {e} =?= {lhs}")
     (withReducible (isDefEq e lhs))
   unless unifies do return none
   -- just like in `kabstract`, we compare the `HeadIndex` and number of arguments
@@ -242,7 +242,7 @@ def checkRewrite (lem : RewriteLemma) (e : Expr) (pos : ExprWithPos) : MetaM (Op
   -- instead of just not showing the suggestion.
   if lhs.toHeadIndex != e.toHeadIndex || lhs.headNumArgs != e.headNumArgs then
     return none
-  try synthAppInstances `infoview_suggest default mvars binderInfos false false
+  try synthAppInstances `infoview_search default mvars binderInfos false false
   catch _ => return none
   let mut extraGoals := #[]
   let mut justLemmaName := true
@@ -365,7 +365,7 @@ def generateSuggestion (expr : Expr) (pasteInfo : RwPasteInfo) (pos : ExprWithPo
   BaseIO.asTask <| EIO.catchExceptions (← dropM do withCurrHeartbeats do
     have : MonadExceptOf _ MetaM := MonadAlwaysExcept.except
     try .ok <$> withNewMCtxDepth do
-      Core.checkSystem "rw!?"
+      Core.checkSystem "infoview_search"
       let some rewrite ← checkRewrite lem expr pos | return none
       some <$> rewrite.toResult pasteInfo
     catch e => withCurrHeartbeats do
