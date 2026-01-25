@@ -17,15 +17,6 @@ open Lean Meta Widget ProofWidgets Jsx Server
 initialize
   registerTraceClass `infoview_search
 
-/-- Determine whether the match `e` is too generic to be useful for insertion in
-a discrimination tree of all imported theorems. -/
-def isBadMatch (e : Expr) : Bool :=
-  e.getAppFn.isMVar ||
-  -- this extra check excludes lemmas that match a general equality
-  -- these are almost never useful, and there are very many of them.
-  e.eq?.any fun (α, l, r) =>
-    α.getAppFn.isMVar && l.getAppFn.isMVar && r.getAppFn.isMVar && l != r
-
 instance {α} : Append (RefinedDiscrTree.MatchResult α) where
   append a b := ⟨a.elts.mergeWith (fun _ a b => a ++ b) b.elts⟩
 
@@ -40,7 +31,7 @@ inductive PremiseKind where
   /-- A lemma from the current file -/
   | fromFile
   /-- A lemma from an imported file -/
-  | fromCache
+  | fromImport
 
 inductive Premise where
   | const (declName : Name)
@@ -82,24 +73,16 @@ structure PasteInfo where
   /-- The preceding piece of syntax. This is used for merging consecutive `rw` tactics. -/
   stx : Syntax
 
-/-- The information required for constructing the rewrite tactic syntax that will be
-pasted into the editor. -/
-structure RwPasteInfo extends PasteInfo where
-  /-- The occurence at which to rewrite, to be used as `nth_rw n` -/
-  occ : Option Nat
-  /-- The hypothesis at which to rewrite, to be used as `at h` -/
-  hyp? : Option Name
-
 /-- Return syntax for the rewrite tactic `rw [e]`. -/
 def mkRewrite (occ : Option Nat) (symm : Bool) (e : Term) (loc : Option Name) (g := false) :
     CoreM (TSyntax `tactic) := do
-  let loc ← loc.mapM fun h => `(Lean.Parser.Tactic.location| at $(mkIdent h):term)
+  let loc := loc.map mkIdent
   let rule ← if symm then `(Parser.Tactic.rwRule| ← $e) else `(Parser.Tactic.rwRule| $e:term)
   match occ, g with
-  | some n, false => `(tactic| nth_rw $(Syntax.mkNatLit n):num [$rule] $(loc)?)
-  | none, false => `(tactic| rw [$rule] $(loc)?)
-  | some n, true => `(tactic| nth_grw $(Syntax.mkNatLit n):num [$rule] $(loc)?)
-  | none, true => `(tactic| grw [$rule] $(loc)?)
+  | some n, false => `(tactic| nth_rw $(Syntax.mkNatLit n):num [$rule] $[at $loc:term]?)
+  | none, false => `(tactic| rw [$rule] $[at $loc:term]?)
+  | some n, true => `(tactic| nth_grw $(Syntax.mkNatLit n):num [$rule] $[at $loc:term]?)
+  | none, true => `(tactic| grw [$rule] $[at $loc:term]?)
 
 /-- Get the `BinderInfo`s for the arguments of `mkAppN fn args`. -/
 def getBinderInfos (fn : Expr) (args : Array Expr) : MetaM (Array BinderInfo) := do
@@ -198,9 +181,8 @@ structure ExprWithPos where
   /-- The position of within the root expression. -/
   targetPos  : SubExpr.Pos
 
-def kabstractFindsPositions (p : Expr) (pos : ExprWithPos) : MetaM Bool := do
-  let { root, targetPos } := pos
-  let e ← instantiateMVars root
+def kabstractFindsPositions (e p : Expr) (targetPos : SubExpr.Pos) : MetaM Bool := do
+  let e ← instantiateMVars e
   let mctx ← getMCtx
   let pHeadIdx := p.toHeadIndex
   let pNumArgs := p.headNumArgs

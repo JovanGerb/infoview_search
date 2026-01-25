@@ -6,85 +6,10 @@ public import Mathlib.Tactic.ApplyAt
 public meta section
 
 namespace InfoviewSearch.ApplyAt
-open Lean Meta RefinedDiscrTree Widget Server ProofWidgets Jsx
-
+open Lean Meta Widget Server ProofWidgets Jsx
 
 structure ApplyAtLemma where
   name : Premise
-
-/-- Try adding the lemma to the `RefinedDiscrTree`. -/
-def addApplyAtEntry (name : Name) (cinfo : ConstantInfo) :
-    MetaM (List (ApplyAtLemma × List (Key × LazyEntry))) := do
-  setMCtx {} -- recall that the metavariable context is not guaranteed to be empty at the start
-  let (xs, _, _) ← forallMetaTelescope cinfo.type
-  let some x := xs.back? | return []
-  let e ← inferType x
-  if isBadMatch e then
-    return []
-  else
-    return [({ name := .const name }, ← initializeLazyEntryWithEta e)]
-
-/-- Try adding the local hypothesis to the `RefinedDiscrTree`. -/
-def addLocalApplyEntry (decl : LocalDecl) :
-    MetaM (List (ApplyAtLemma × List (Key × LazyEntry))) :=
-  withReducible do
-  let (xs, _, _) ← forallMetaTelescopeReducing decl.type
-  let some x := xs.back? | return []
-  let e ← inferType x
-  return [(⟨.fvar decl.fvarId⟩, ← initializeLazyEntryWithEta e)]
-
-initialize importedApplyLemmasExt : EnvExtension (IO.Ref (Option (RefinedDiscrTree ApplyAtLemma))) ←
-  registerEnvExtension (IO.mkRef none)
-
-/-- Get all potential apply lemmas from the imported environment.
-By setting the `librarySearch.excludedModules` option, all lemmas from certain modules
-can be excluded. -/
-def getImportCandidates (expr : ExprWithPos) (hyp? : Option FVarId) :
-    MetaM (MatchResult ApplyAtLemma) := do
-  unless expr.targetPos == .root && hyp?.isSome do
-    return {}
-  unless ← isProp expr.root do
-    return {}
-  findImportMatches importedApplyLemmasExt addApplyAtEntry
-    /-
-    5000 constants seems to be approximately the right number of tasks
-    Too many means the tasks are too long.
-    Too few means less cache can be reused and more time is spent on combining different results.
-
-    With 5000 constants per task, we set the `HashMap` capacity to 256,
-    which is the largest capacity it gets to reach.
-    -/
-    (constantsPerTask := 5000) (capacityPerTask := 256) expr.root
-
-/-- Get all potential apply lemmas from the current file. Exclude lemmas from modules
-in the `librarySearch.excludedModules` option. -/
-def getModuleCandidates (e : Expr) (parentDecl? : Option Name) :
-    MetaM (MatchResult ApplyAtLemma) := do
-  let moduleTreeRef ← createModuleTreeRef fun name cinfo ↦
-    if name == parentDecl? then return [] else addApplyAtEntry name cinfo
-  findModuleMatches moduleTreeRef e
-
-/-- Construct the `RefinedDiscrTree` of all local hypotheses. -/
-def getHypotheses (except : Option FVarId) : MetaM (RefinedDiscrTree ApplyAtLemma) := do
-  let mut tree : PreDiscrTree ApplyAtLemma := {}
-  for decl in ← getLCtx do
-    if !decl.isImplementationDetail && except.all (· != decl.fvarId) then
-      for (val, entries) in ← addLocalApplyEntry decl do
-        for (key, entry) in entries do
-          tree := tree.push key (entry, val)
-  return tree.toRefinedDiscrTree
-
-/-- Return all applicable hypothesis applications for `e`. Similar to `getImportCandidates`. -/
-def getHypothesisCandidates (expr : ExprWithPos) (hyp? : Option FVarId) :
-    MetaM (MatchResult ApplyAtLemma) := do
-  unless expr.targetPos == .root && hyp?.isSome do
-    return {}
-  unless ← isProp expr.root do
-    return {}
-  let (candidates, _) ← (← getHypotheses hyp?).getMatch expr.root
-    (unify := false) (matchRootStar := true)
-  MonadExcept.ofExcept candidates
-
 
 /-! ### Checking apply lemmas -/
 
@@ -107,19 +32,20 @@ structure Application extends ApplyAtLemma where
   /-- Whether any of the new goals contain another a new metavariable -/
   makesNewMVars : Bool
   info : ApplicationInfo
+  hyp : Name
 
 set_option linter.style.emptyLine false in
 /-- If `thm` can be used to apply to `e`, return the applications. -/
-def checkApplication (lem : ApplyAtLemma) (target : Expr) : MetaM (Option Application) := do
+def checkApplication (lem : ApplyAtLemma) (e : Expr) (hyp : Name) : MetaM (Option Application) := do
   let thm ← match lem.name with
     | .const name => mkConstWithFreshMVarLevels name
     | .fvar fvarId => pure (.fvar fvarId)
-  withTraceNodeBefore `infoview_search (return m!"applying {thm} to {target}") do
+  withTraceNodeBefore `infoview_search (return m!"applying {thm} to {e}") do
   let (mvars, binderInfos, replacement) ← forallMetaTelescopeReducing (← inferType thm)
-  let e ← inferType mvars.back!
+  let assume ← inferType mvars.back!
   let mvars := mvars.pop
-  let unifies ← withTraceNodeBefore `infoview_search (return m! "unifying {e} =?= {target}")
-    (withReducible (isDefEq e target))
+  let unifies ← withTraceNodeBefore `infoview_search (return m! "unifying {assume} =?= {e}")
+    (withReducible (isDefEq assume e))
   unless unifies do return none
   try synthAppInstances `infoview_search default mvars binderInfos false false
   catch _ => return none
@@ -143,7 +69,7 @@ def checkApplication (lem : ApplyAtLemma) (target : Expr) : MetaM (Option Applic
     name := lem.name.toString
     newGoals := ← newGoals.mapM fun g => do abstractMVars (← g.1.getType)
   }
-  return some { lem with proof, replacement, newGoals, makesNewMVars, info }
+  return some { lem with proof, replacement, newGoals, makesNewMVars, info, hyp }
 
 def ApplicationInfo.lt (a b : ApplicationInfo) : Bool :=
   Ordering.isLT <|
@@ -159,9 +85,9 @@ def ApplicationInfo.isDuplicate (a b : ApplicationInfo) : MetaM Bool :=
       <&&> isExplicitEq a.newGoals[i]!.expr b.newGoals[i]!.expr
 
 /-- Return the `apply` tactic that performs the application. -/
-def tacticSyntax (app : Application) (pasteInfo : RwPasteInfo) : MetaM (TSyntax `tactic) := do
+def tacticSyntax (app : Application) : MetaM (TSyntax `tactic) := do
   -- let proof ← withOptions (pp.mvars.set · false) (PrettyPrinter.delab app.proof)
-  `(tactic| apply $(mkIdent (← app.name.unresolveName)) at $(mkIdent pasteInfo.hyp?.get!))
+  `(tactic| apply $(mkIdent (← app.name.unresolveName)) at $(mkIdent app.hyp))
 
 /-- `ApplyResult` stores the information from an apply lemma that was successful. -/
 structure ApplyResult where
@@ -183,9 +109,8 @@ instance : DecidableLT ApplyResult := fun a b => by
 
 set_option linter.style.emptyLine false in
 /-- Construct the `Result` from an `Application`. -/
-def Application.toResult (app : Application) (pasteInfo : RwPasteInfo) :
-    MetaM ApplyResult := do
-  let tactic ← tacticSyntax app pasteInfo
+def Application.toResult (app : Application) (pasteInfo : PasteInfo) : MetaM ApplyResult := do
+  let tactic ← tacticSyntax app
   let replacement ← ppExprTagged app.replacement
   let mut newGoals := #[]
   for (mvarId, bi) in app.newGoals do
@@ -197,7 +122,7 @@ def Application.toResult (app : Application) (pasteInfo : RwPasteInfo) :
   let prettyLemma ← ppPremiseTagged app.name
 
   let html (showNames : Bool) :=
-    mkSuggestionElement tactic pasteInfo.toPasteInfo <|
+    mkSuggestionElement tactic pasteInfo <|
       let newGoals := newGoals.map
         (<div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={·}/> </div>)
       .element "div" #[] <|
@@ -222,13 +147,13 @@ def Application.toResult (app : Application) (pasteInfo : RwPasteInfo) :
 Note: we use two `try`-`catch` clauses, because we rely on `ppConstTagged`
 in the first `catch` branch, which could (in principle) throw an error again.
 -/
-def generateSuggestion (expr : Expr) (pasteInfo : RwPasteInfo) (lem : ApplyAtLemma) :
+def generateSuggestion (expr : Expr) (pasteInfo : PasteInfo) (hyp : Name) (lem : ApplyAtLemma) :
     MetaM <| Task (Except Html <| Option ApplyResult) := do
   BaseIO.asTask <| EIO.catchExceptions (← dropM do withCurrHeartbeats do
     have : MonadExceptOf _ MetaM := MonadAlwaysExcept.except
     try .ok <$> withNewMCtxDepth do
       Core.checkSystem "infoview_search"
-      let some app ← checkApplication lem expr | return none
+      let some app ← checkApplication lem expr hyp | return none
       some <$> app.toResult pasteInfo
     catch e => withCurrHeartbeats do
       return .error
@@ -258,7 +183,7 @@ structure SectionState where
   /-- The computations for apply theorems that have not finished evaluating. -/
   pending : Array (Task (Except Html <| Option ApplyResult))
 
-def updateSectionState (s : SectionState) : MetaM (Array Html × SectionState) := do
+def SectionState.update (s : SectionState) : MetaM (Array Html × SectionState) := do
   let mut pending := #[]
   let mut results := s.results
   let mut exceptions := #[]
@@ -289,12 +214,12 @@ where
       pure res.filtered.isSome <&&> res.info.isDuplicate result.info
 
 /-- Render one section of rewrite results. -/
-def renderSection (filter : Bool) (s : SectionState) : Option Html := do
+def SectionState.render (filter : Bool) (s : SectionState) : Option Html := do
   let head ← s.results[0]?
   let suffix := match s.kind with
     | .hypothesis => " (local hypotheses)"
     | .fromFile => " (lemmas from current file)"
-    | .fromCache => ""
+    | .fromImport => ""
   let suffix := if s.pending.isEmpty then suffix else suffix ++ " ⏳"
   let htmls := if filter then s.results.filterMap (·.filtered) else s.results.map (·.unfiltered)
   guard (!htmls.isEmpty)

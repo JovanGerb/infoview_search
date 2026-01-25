@@ -54,3 +54,20 @@ example {p q r : Prop} (h₁ : p → q → r) (h₂ : p → q) (h₃ : p) : r :=
   -- TODO: make this work:
   -- search_test h₁ "/1/0" => "apply_rw [← h₂]\n  "
   exact test_sorry
+
+
+/-
+TODO: add tests for
+
+- You can rewrite with local theorems even if they are a very general match
+  (and test that this doesn't work with global theorems).
+- The `rw` suggestions only show one of the two directions for lemmas that are the same in
+  both directions.
+
+TODO:
+
+- use `rw!` instead of `rw` when motive is not type correct
+- use `simp_rw` instead of `rw` when head constant doesn't match.
+- improve `nth_rw` heuristic & add a test
+
+-/

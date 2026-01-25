@@ -6,11 +6,11 @@ Authors: Jovan Gerbscheid
 module
 
 public import InfoviewSearch.Util
-public import ProofWidgets.Data.Html
 public import ProofWidgets.Component.Panel.Basic
+public import ProofWidgets.Data.Html
 
 /-!
-## The `RefreshComponent` widget
+# The `RefreshComponent` widget
 
 This file defines `RefreshComponent`, which allows you to have an HTML widget that updates
 incrementally as more results are computed by a Lean computation.
@@ -22,6 +22,32 @@ To determine whether the widget is up to date, each computed HTML has an associa
 
 When the widget (re)loads, it first loads the current HTML from the ref, and then
 repeatedly awaits further HTML result.
+
+## Known limitations
+
+Cancellation is a bit hard to get right, and there are two limitations.
+
+1. When using a `RefreshComponent` that reacts to shift-clicking in the infoview,
+we want to cancel the computation whenever a new selection is made.
+We acomplish this in `mkCancelPanelWidget` by creating a reference to a cancel token,
+which we can reset every time a new selection is made.
+On the other hand, we would also like to cancel the computation if that part of the file gets
+reloaded. Unfortunately, the `CoreM` monad can only store up to 1 cancel token at a time.
+The result is that if you close the infoview while the widget is active, and then reload
+this part of the file, the widget computation keeps running without any way to stop it
+(except for restarting the file, or waiting it out)
+2. When using a `RefreshComponent` that comes directly from a command/tactic (no shift-clicking),
+then we pass the cancel token used by elaboration to the refresh component computation.
+Unfortunately there is an edge case where the cancel token gets set while the corresponding
+command does not get re-elaborated. In particular, if you have three command in a row, e.g.
+```
+#html countToTen
+#html countToTen
+#html countToTen
+```
+Then commenting out the third command will cancel the widget of the first command.
+It refreshes the second command, and doesn't affect commands before the first command - only
+the first command gets badly affected.
 -/
 
 public meta section
@@ -36,7 +62,7 @@ structure VersionedHtml where
   html : Html
   /-- The version number of the HTML. It is a count of how many HTMLs were created. -/
   idx : Nat
-  deriving RpcEncodable, Inhabited
+  deriving RpcEncodable, Nonempty
 
 /-- The `RefreshState` stores the incremental result of the HTML computation. -/
 structure RefreshState where
@@ -83,10 +109,12 @@ def getCurrState (ref : WithRpcRef RefreshRef) : RequestM (RequestTask Versioned
 
 end RefreshComponent
 
+open RefreshComponent
+
 /-- The argument passed to `RefreshComponent`. -/
 structure RefreshComponentProps where
   /-- The refresh state that is queried for updating the display. -/
-  state : WithRpcRef RefreshComponent.RefreshRef
+  state : WithRpcRef RefreshRef
   deriving RpcEncodable
 
 set_option linter.style.longLine false in
@@ -97,41 +125,45 @@ def RefreshComponent : Component RefreshComponentProps where
   javascript := "window;import{jsxs as e,jsx as t,Fragment as n}from\"react/jsx-runtime\";import*as r from\"react\";import a from\"react\";import{useRpcSession as o,EnvPosContext as i,useAsyncPersistent as s,mapRpcError as c,importWidgetModule as l}from\"@leanprover/infoview\";async function m(a,o,i){if(\"text\"in i)return t(n,{children:i.text});if(\"element\"in i){const[e,n,s]=i.element,c={};for(const[e,t]of n)c[e]=t;const l=await Promise.all(s.map((async e=>await m(a,o,e))));return\"hr\"===e?t(\"hr\",{}):0===l.length?r.createElement(e,c):r.createElement(e,c,l)}if(\"component\"in i){const[e,t,n,s]=i.component,c=await Promise.all(s.map((async e=>await m(a,o,e)))),f={...n,pos:o},u=await l(a,o,e);if(!(t in u))throw new Error(`Module '${e}' does not export '${t}'`);return 0===c.length?r.createElement(u[t],f):r.createElement(u[t],f,c)}return e(\"span\",{className:\"red\",children:[\"Unknown HTML variant: \",JSON.stringify(i)]})}function f({html:a}){const l=o(),f=r.useContext(i),u=s((()=>m(l,f,a)),[l,f,a]);return\"resolved\"===u.state?u.value:\"rejected\"===u.state?e(\"span\",{className:\"red\",children:[\"Error rendering HTML: \",c(u.error).message]}):t(n,{})}function u(e){const r=o(),[i,s]=a.useState(null);return a.useEffect((()=>{let t=!1;async function n(a){const o=await r.call(\"ProofWidgets.RefreshComponent.awaitRefresh\",{oldIdx:a,state:e.state});if(!t&&o)return s(o.html),n(o.idx)}return(async()=>{const a=await r.call(\"ProofWidgets.RefreshComponent.getCurrState\",e.state);if(!t)s(a.html),n(a.idx)})(),()=>{t=!0}}),[e]),i?t(f,{html:i}):t(n,{})}export{u as default};"
 
 
-/-! ## API for creating `RefreshComponent`s -/
+/-! ## API for creating a `RefreshComponent` -/
 
-namespace RefreshComponent
+/-- A `RefreshToken` allows you to update the state of the corresponding `RefreshComponent`
+using `RefreshToken.refresh`. -/
+structure RefreshToken where
+  /-- The reference that was given to the corresponding `RefreshComponent`. -/
+  ref : RefreshRef
+  /-- The promise that will resolve the `next` field in `ref`.
+  If we drop the reference to this structure, and hence to this promise,
+  the `next` field will resolve to `none`. -/
+  promise : IO.Ref (IO.Promise VersionedHtml)
 
-/-- The monad transformer for maintaining a `RefreshComponent`.
-The `RefreshState` ref must also be passed to the corresponding `RefreshComponent`.
-The `IO.Promise VersionedHtml` is what is used to create the `RefreshState.next` task.
-If it is resolved, the task will return the next HTML. If not, the task will return `none`. -/
-abbrev RefreshT (m : Type → Type) :=
-  ReaderT (IO.Ref RefreshState) <| StateRefT' IO.RealWorld (IO.Promise VersionedHtml) m
+/-- Create a fresh `RefreshToken` with initial HTML `initial`. -/
+def RefreshToken.new (initial : Html) : BaseIO RefreshToken := do
+  let promise ← IO.Promise.new
+  return {
+    ref := ← IO.mkRef { curr := { html := initial, idx := 0 }, next := promise.result? }
+    promise := ← IO.mkRef promise }
 
-variable {m} [Monad m] [MonadLiftT BaseIO m] [MonadLiftT (ST IO.RealWorld) m]
-
-/-- Update the current HTML to be `html`. -/
-def refresh (html : Html) : RefreshT m Unit := do
-  let idx := (← (← read).get).curr.idx + 1
-  (← get).resolve { html, idx }
+/-- Update the current HTML to be `html`.
+This function makes use of `ST.Ref.take` in order to be thread safe.
+That is, if multiple different threads call `RefreshToken.refresh` with the same refresh token,
+a call will block other calls until it is finished. -/
+def RefreshToken.refresh (token : RefreshToken) (html : Html) : BaseIO Unit := unsafe do
+  let { ref, promise } := token
+  let idx := (← ref.take).curr.idx + 1
+  (← promise.get).resolve { html, idx }
   let newPromise ← IO.Promise.new
-  (← read).set { curr := { html, idx }, next := newPromise.result? }
-  set newPromise
-
-end RefreshComponent
-
-open RefreshComponent
+  promise.set newPromise
+  ref.set { curr := { html, idx }, next := newPromise.result? }
 
 variable {m} [Monad m] [MonadDrop m (EIO Exception)] [MonadLiftT BaseIO m]
 
 /-- Create a `RefreshComponent`. In order to implicitly support cancellation, `m` should extend
 `CoreM`, and hence have access to a cancel token. -/
-def mkRefreshComponent (initial : Html) (k : RefreshT m Unit) : m Html := do
-  let promise ← IO.Promise.new
-  let promiseRef ← IO.mkRef promise
-  let ref ← IO.mkRef { curr := { html := initial, idx := 0 }, next := promise.result? }
+def mkRefreshComponent (initial : Html) (k : RefreshToken → m Unit) : m Html := do
+  let token ← RefreshToken.new initial
   discard <| BaseIO.asTask (prio := .dedicated) <|
-    (← dropM <| k ref promiseRef).catchExceptions fun ex => (refresh · ref promiseRef) =<< do
+    (← dropM <| k token).catchExceptions fun ex => token.refresh =<< do
       if let .internal id _ := ex then
         if id == interruptExceptionId then
           return .text "This component was cancelled"
@@ -139,7 +171,7 @@ def mkRefreshComponent (initial : Html) (k : RefreshT m Unit) : m Html := do
           An error occurred while refreshing this component:
           <InteractiveMessage msg={← WithRpcRef.mk ex.toMessageData}/>
         </span>
-  return <RefreshComponent state={← WithRpcRef.mk ref}/>
+  return <RefreshComponent state={← WithRpcRef.mk token.ref}/>
 
 /-- Create a `RefreshComponent`. Explicitly support cancellation by creating a cancel token,
 and setting the previous cancel token. This is useful when the component depends on the selections
@@ -148,12 +180,13 @@ in the goal, so that after making a new selection, the previous computation is c
 Note: The cancel token is only set when a new computation is started.
   When the infoview is closed, this unfortunately doesn't set the cancel token. -/
 def mkCancelRefreshComponent [MonadWithReaderOf Core.Context m]
-    (cancelTkRef : IO.Ref IO.CancelToken) (initial : Html) (k : RefreshT m Unit) : m Html := do
+    (cancelTkRef : IO.Ref IO.CancelToken) (initial : Html) (k : RefreshToken → m Unit) :
+    m Html := do
   let cancelTk ← IO.CancelToken.new
   let oldTk ← (cancelTkRef.swap cancelTk : BaseIO _)
   oldTk.set
-  mkRefreshComponent initial do
-    withTheReader Core.Context ({· with cancelTk? := cancelTk }) k
+  mkRefreshComponent initial fun token ↦
+    withTheReader Core.Context ({· with cancelTk? := cancelTk }) <| k token
 
 abbrev CancelTokenRef := IO.Ref IO.CancelToken
 
@@ -165,11 +198,11 @@ structure CancelPanelWidgetProps extends PanelWidgetProps where
   cancelTkRef : WithRpcRef (IO.Ref IO.CancelToken)
   deriving RpcEncodable
 
-/-- Locally display a widget that supports cancellation via `CancelPanelWidgetProps`. -/
-def showCancelPanelWidget (component : Component CancelPanelWidgetProps) : CoreM Unit := do
+/-- Return a widget that supports cancellation via `CancelPanelWidgetProps`.
+The widget can be activated with for example `addPanelWidgetLocal` or  `addPanelWidgetGlobal`. -/
+def mkCancelPanelWidget (component : Component CancelPanelWidgetProps) : CoreM WidgetInstance := do
   let cancelTkRef ← WithRpcRef.mk (← IO.mkRef (← IO.CancelToken.new))
-  let wi ← Widget.WidgetInstance.ofHash component.javascriptHash
+  Widget.WidgetInstance.ofHash component.javascriptHash
     (return json% {cancelTkRef : $(← rpcEncode cancelTkRef)})
-  addPanelWidgetLocal wi
 
 end ProofWidgets

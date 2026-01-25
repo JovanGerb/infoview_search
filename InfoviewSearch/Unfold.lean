@@ -124,22 +124,22 @@ def filteredUnfolds (e : Expr) : MetaM (Array Expr) := do
   (← unfolds e).filterM isUserFriendly
 
 /-- Return the tactic string that does the unfolding. -/
-def tacticSyntax (e eNew : Expr) (occ : Option Nat) (loc : Option Name) :
+def tacticSyntax (e eNew : Expr) (occ : Option Nat) (hyp? : Option Name) :
     MetaM (TSyntax `tactic) := do
   let e ← PrettyPrinter.delab e
   let eNew ← PrettyPrinter.delab eNew
   let fromRfl ← `(show $e = $eNew from $(mkIdent `rfl))
-  mkRewrite occ false fromRfl loc
+  mkRewrite occ false fromRfl hyp?
 
 /-- Render the unfolds of `e` as given by `filteredUnfolds`, with buttons at each suggestion
 for pasting the rewrite tactic. Return `none` when there are no unfolds. -/
-def renderUnfolds (e : Expr) (occ : Option Nat) (loc : Option Name) (pasteInfo : PasteInfo) :
+def renderUnfolds (e : Expr) (occ : Option Nat) (hyp? : Option Name) (pasteInfo : PasteInfo) :
     MetaM (Option Html) := do
   let results ← filteredUnfolds e
   if results.isEmpty then
     return none
   let htmls ← results.mapM fun unfold => do
-    let tactic ← tacticSyntax e unfold occ loc
+    let tactic ← tacticSyntax e unfold occ hyp?
     mkSuggestionElement tactic pasteInfo <InteractiveCode fmt={← ppExprTagged unfold}/>
   return mkListElement (startOpen := false) htmls <| .text "unfold"
 

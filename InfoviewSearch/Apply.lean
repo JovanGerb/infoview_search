@@ -5,76 +5,10 @@ public import InfoviewSearch.Util
 public meta section
 
 namespace InfoviewSearch.Apply
-open Lean Meta RefinedDiscrTree Widget Server ProofWidgets Jsx
+open Lean Meta Widget Server ProofWidgets Jsx
 
 structure ApplyLemma where
   name : Premise
-
-/-- Try adding the lemma to the `RefinedDiscrTree`. -/
-def addApplyEntry (name : Name) (cinfo : ConstantInfo) :
-    MetaM (List (ApplyLemma × List (Key × LazyEntry))) := do
-  setMCtx {} -- recall that the metavariable context is not guaranteed to be empty at the start
-  let (_, _, e) ← forallMetaTelescope cinfo.type
-  if isBadMatch e then
-    return []
-  else
-    return [({ name := .const name }, ← initializeLazyEntryWithEta e)]
-
-/-- Try adding the local hypothesis to the `RefinedDiscrTree`. -/
-def addLocalApplyEntry (decl : LocalDecl) :
-    MetaM (List (ApplyLemma × List (Key × LazyEntry))) :=
-  withReducible do
-  let (_, _, e) ← forallMetaTelescopeReducing decl.type
-  return [(⟨.fvar decl.fvarId⟩, ← initializeLazyEntryWithEta e)]
-
-initialize importedApplyLemmasExt : EnvExtension (IO.Ref (Option (RefinedDiscrTree ApplyLemma))) ←
-  registerEnvExtension (IO.mkRef none)
-
-/-- Get all potential apply lemmas from the imported environment.
-By setting the `librarySearch.excludedModules` option, all lemmas from certain modules
-can be excluded. -/
-def getImportCandidates (expr : ExprWithPos) (hyp? : Option FVarId) :
-    MetaM (MatchResult ApplyLemma) := do
-  unless expr.targetPos == .root && hyp?.isNone do
-    return {}
-  findImportMatches importedApplyLemmasExt addApplyEntry
-    /-
-    5000 constants seems to be approximately the right number of tasks
-    Too many means the tasks are too long.
-    Too few means less cache can be reused and more time is spent on combining different results.
-
-    With 5000 constants per task, we set the `HashMap` capacity to 256,
-    which is the largest capacity it gets to reach.
-    -/
-    (constantsPerTask := 5000) (capacityPerTask := 256) expr.root
-
-/-- Get all potential apply lemmas from the current file. Exclude lemmas from modules
-in the `librarySearch.excludedModules` option. -/
-def getModuleCandidates (e : Expr) (parentDecl? : Option Name) :
-    MetaM (MatchResult ApplyLemma) := do
-  let moduleTreeRef ← createModuleTreeRef fun name cinfo ↦
-    if name == parentDecl? then return [] else addApplyEntry name cinfo
-  findModuleMatches moduleTreeRef e
-
-/-- Construct the `RefinedDiscrTree` of all local hypotheses. -/
-def getHypotheses (except : Option FVarId) : MetaM (RefinedDiscrTree ApplyLemma) := do
-  let mut tree : PreDiscrTree ApplyLemma := {}
-  for decl in ← getLCtx do
-    if !decl.isImplementationDetail && except.all (· != decl.fvarId) then
-      for (val, entries) in ← addLocalApplyEntry decl do
-        for (key, entry) in entries do
-          tree := tree.push key (entry, val)
-  return tree.toRefinedDiscrTree
-
-/-- Return all applicable hypothesis applications for `e`. Similar to `getImportCandidates`. -/
-def getHypothesisCandidates (expr : ExprWithPos) (hyp? : Option FVarId) :
-    MetaM (MatchResult ApplyLemma) := do
-  unless expr.targetPos == .root && hyp?.isNone do
-    return {}
-  let (candidates, _) ← (← getHypotheses hyp?).getMatch expr.root
-    (unify := false) (matchRootStar := true)
-  MonadExcept.ofExcept candidates
-
 
 /-! ### Checking apply lemmas -/
 
@@ -242,7 +176,7 @@ structure SectionState where
   /-- The computations for apply theorems that have not finished evaluating. -/
   pending : Array (Task (Except Html <| Option ApplyResult))
 
-def updateSectionState (s : SectionState) : MetaM (Array Html × SectionState) := do
+def SectionState.update (s : SectionState) : MetaM (Array Html × SectionState) := do
   let mut pending := #[]
   let mut results := s.results
   let mut exceptions := #[]
@@ -273,12 +207,12 @@ where
       pure res.filtered.isSome <&&> res.info.isDuplicate result.info
 
 /-- Render one section of rewrite results. -/
-def renderSection (filter : Bool) (s : SectionState) : Option Html := do
+def SectionState.render (filter : Bool) (s : SectionState) : Option Html := do
   let head ← s.results[0]?
   let suffix := match s.kind with
     | .hypothesis => " (local hypotheses)"
     | .fromFile => " (lemmas from current file)"
-    | .fromCache => ""
+    | .fromImport => ""
   let suffix := if s.pending.isEmpty then suffix else suffix ++ " ⏳"
   let htmls := if filter then s.results.filterMap (·.filtered) else s.results.map (·.unfiltered)
   guard (!htmls.isEmpty)

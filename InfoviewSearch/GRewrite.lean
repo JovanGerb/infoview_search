@@ -5,8 +5,7 @@ Authors: Jovan Gerbscheid, Anand Rao
 -/
 module
 
-public import Mathlib.Lean.Meta.RefinedDiscrTree
-public import InfoviewSearch.RefreshComponent
+public import InfoviewSearch.Util
 
 public meta section
 
@@ -14,7 +13,7 @@ namespace InfoviewSearch.Grw
 
 /-! ### Caching -/
 
-open Lean Meta RefinedDiscrTree Mathlib.Tactic
+open Lean Meta Mathlib.Tactic
 
 /-- The structure for rewrite lemmas stored in the `RefinedDiscrTree`. -/
 structure GRewriteLemma where
@@ -25,41 +24,6 @@ structure GRewriteLemma where
   /-- `relName` is the relation of the lemma. -/
   relName : Name
 
-/-- Try adding the lemma to the `RefinedDiscrTree`. -/
-def addGRewriteEntry (name : Name) (cinfo : ConstantInfo) :
-    MetaM (List (GRewriteLemma × List (Key × LazyEntry))) := do
-  -- we start with a fast-failing check to see if the lemma has the right shape
-  let .app (.app f _) _ := cinfo.type.getForallBody | return []
-  let .const relName _ := f.getAppFn | do return []
-  if relName matches ``Eq | ``Iff then return []
-  setMCtx {} -- recall that the metavariable context is not guaranteed to be empty at the start
-  let (_, _, e) ← forallMetaTelescope cinfo.type
-  let .app (.app _ lhs) rhs := e | return []
-  let mut result := []
-  unless isBadMatch lhs do
-    result :=
-      ({ name := .const name, symm := false, relName }, ← initializeLazyEntryWithEta lhs) :: result
-  unless isBadMatch rhs do
-    result :=
-      ({ name := .const name, symm := true, relName }, ← initializeLazyEntryWithEta rhs) :: result
-  return result
-
-/-- Try adding the local hypothesis to the `RefinedDiscrTree`. -/
-def addLocalGRewriteEntry (decl : LocalDecl) :
-    MetaM (List (GRewriteLemma × List (Key × LazyEntry))) :=
-  withReducible do
-  let (_, _, e) ← forallMetaTelescope decl.type
-  let .app (.app f lhs) rhs ← instantiateMVars e | return []
-  let .const relName _ := f.getAppFn | return []
-  if relName matches ``Eq | ``Iff then return []
-  return [
-    ({ name := .fvar decl.fvarId, symm := false, relName }, ← initializeLazyEntryWithEta lhs),
-    ({ name := .fvar decl.fvarId, symm := true, relName }, ← initializeLazyEntryWithEta rhs)]
-
-initialize importedRewriteLemmasExt :
-    EnvExtension (IO.Ref (Option (RefinedDiscrTree GRewriteLemma))) ←
-  registerEnvExtension (IO.mkRef none)
-
 structure GRewritePos where
   relation : Expr
   relName : Name
@@ -67,62 +31,17 @@ structure GRewritePos where
 
 -- TODO: when the relation is symmetric, then look up both directions in the discr tree.
 
-/-- Get all potential rewrite lemmas from the imported environment.
-By setting the `librarySearch.excludedModules` option, all lemmas from certain modules
-can be excluded. -/
-def getImportCandidates (e : Expr) (gpos : Option Grw.GRewritePos) :
-    MetaM (MatchResult GRewriteLemma) := do
-  unless gpos.isSome do
-    return {}
-  findImportMatches importedRewriteLemmasExt addGRewriteEntry
-    /-
-    5000 constants seems to be approximately the right number of tasks
-    Too many means the tasks are too long.
-    Too few means less cache can be reused and more time is spent on combining different results.
-
-    With 5000 constants per task, we set the `HashMap` capacity to 256,
-    which is the largest capacity it gets to reach.
-    -/
-    (constantsPerTask := 5000) (capacityPerTask := 256) e
-
-/-- Get all potential rewrite lemmas from the current file. Exclude lemmas from modules
-in the `librarySearch.excludedModules` option. -/
-def getModuleCandidates (e : Expr) (parentDecl? : Option Name) :
-    MetaM (MatchResult GRewriteLemma) := do
-  let moduleTreeRef ← createModuleTreeRef fun name cinfo ↦
-    if name == parentDecl? then return [] else addGRewriteEntry name cinfo
-  findModuleMatches moduleTreeRef e
-
-/-- Construct the `RefinedDiscrTree` of all local hypotheses. -/
-def getHypotheses (except : Option FVarId) : MetaM (RefinedDiscrTree GRewriteLemma) := do
-  let mut tree : PreDiscrTree GRewriteLemma := {}
-  for decl in ← getLCtx do
-    if !decl.isImplementationDetail && except.all (· != decl.fvarId) then
-      for (val, entries) in ← addLocalGRewriteEntry decl do
-        for (key, entry) in entries do
-          tree := tree.push key (entry, val)
-  return tree.toRefinedDiscrTree
-
-/-- Return all applicable hypothesis rewrites of `e`. Similar to `getImportCandidates`. -/
-def getHypothesisCandidates (e : Expr) (except : Option FVarId) (gpos : Option Grw.GRewritePos) :
-    MetaM (MatchResult GRewriteLemma) := do
-  unless gpos.isSome do
-    return {}
-  let (candidates, _) ← (← getHypotheses except).getMatch e (unify := false) (matchRootStar := true)
-  MonadExcept.ofExcept candidates
-
-
-
 /-! ### Checking rewrite lemmas -/
 
 def fakeDischarger (ref : IO.Ref (Option Expr)) (goal : MVarId) : MetaM Bool := do
   ref.set (← instantiateMVars (← goal.getType))
   Meta.throwIsDefEqStuck
 
-def getGRewritePos? (e : Expr) (pos : ExprWithPos) (hyp? : Bool) : MetaM (Option GRewritePos) := do
-  withLocalDeclD `_a (← inferType e) fun fvar => do
-  let root' ← replaceSubexpr (fun _ => pure (GCongr.mkHoleAnnotation fvar)) pos.targetPos pos.root
-  let imp := Expr.forallE `_a pos.root root' .default
+def getGRewritePos? (rootExpr : Expr) (subExpr : SubExpr) (hyp? : Bool) :
+    MetaM (Option GRewritePos) := do
+  withLocalDeclD `_a (← inferType subExpr.expr) fun fvar => do
+  let root' ← replaceSubexpr (fun _ => pure (GCongr.mkHoleAnnotation fvar)) subExpr.pos rootExpr
+  let imp := Expr.forallE `_a rootExpr root' .default
   let gcongrGoal ← mkFreshExprMVar imp
   let ref ← IO.mkRef none
   try
@@ -131,13 +50,13 @@ def getGRewritePos? (e : Expr) (pos : ExprWithPos) (hyp? : Bool) : MetaM (Option
       fun _ => pure ()
   catch _ =>
     return none
-  let some (.app (.app relation lhs) rhs) ← ref.get | return none
+  let some e@(.app (.app relation lhs) rhs) ← ref.get | return none
   let .const relName _ := relation.getAppFn | return none
   if relName matches ``Eq | ``Iff then return none
   let symm ←
     if lhs.cleanupAnnotations == fvar then pure hyp?
     else if rhs.cleanupAnnotations == fvar then pure !hyp?
-    else throwError "{(← ref.get).get!} doesn't have {fvar} on either side"
+    else throwError "{e} doesn't have {fvar} on either side"
   return some { relation, relName, symm }
 
 structure RewriteInfo where
@@ -152,7 +71,7 @@ structure RewriteInfo where
 deriving Inhabited
 
 /-- A rewrite lemma that has been applied to an expression. -/
-structure Rewrite extends GRewriteLemma where
+structure GRewrite extends GRewriteLemma where
   /-- The proof of the rewrite -/
   proof : Expr
   /-- The replacement expression obtained from the rewrite -/
@@ -165,13 +84,14 @@ structure Rewrite extends GRewriteLemma where
   isRefl : Bool
   info : RewriteInfo
   justLemmaName : Bool
+  hyp? : Option Name
+  occ : Option Nat
 
 set_option linter.style.emptyLine false in
-/-- If `thm` can be used to rewrite `e`, return the rewrite.
-HACK: the `name` argument is set to `FVarId.name` in the local rewrite case.
-This works conveniently. -/
-def checkGRewrite (lem : GRewriteLemma) (e : Expr) (gpos : GRewritePos) (pos : ExprWithPos) :
-    MetaM (Option Rewrite) := withReducible do
+/-- If `thm` can be used to rewrite `e`, return the rewrite. -/
+def checkGRewrite (lem : GRewriteLemma) (rootExpr : Expr) (subExpr : SubExpr) (gpos : GRewritePos)
+    (hyp? : Option Name) (occ : Option Nat) : MetaM (Option GRewrite) := withReducible do
+  let e := subExpr.expr
   unless lem.relName == gpos.relName && lem.symm == gpos.symm do
     return none
   let thm ← match lem.name with
@@ -190,8 +110,7 @@ def checkGRewrite (lem : GRewriteLemma) (e : Expr) (gpos : GRewritePos) (pos : E
   unless unifies do return none
   -- just like in `kabstract`, we compare the `HeadIndex` and number of arguments
   let lhs ← instantiateMVars lhs
-  -- TODO: if the `headIndex` doesn't match, then use `simp_rw` instead of `rw` in the suggestion,
-  -- instead of just not showing the suggestion.
+  -- TODO: if the `headIndex` doesn't match, then use `gsimp` instead of `rw` in the suggestion???
   if lhs.toHeadIndex != e.toHeadIndex || lhs.headNumArgs != e.headNumArgs then
     return none
   try synthAppInstances `infoview_search default mvars binderInfos false false
@@ -209,7 +128,7 @@ def checkGRewrite (lem : GRewriteLemma) (e : Expr) (gpos : GRewritePos) (pos : E
       return (type.findMVar? fun mvarId => mvars.any (·.mvarId! == mvarId)).isSome
   let proof ← instantiateMVars (mkAppN thm mvars)
   let isRefl ← isExplicitEq e replacement
-  let justLemmaName ← withMCtx mctxOrig do kabstractFindsPositions lhsOrig pos
+  let justLemmaName ← withMCtx mctxOrig do kabstractFindsPositions rootExpr lhsOrig subExpr.pos
   let info := {
     numGoals := extraGoals.size
     nameLenght := lem.name.length
@@ -217,8 +136,8 @@ def checkGRewrite (lem : GRewriteLemma) (e : Expr) (gpos : GRewritePos) (pos : E
     name := lem.name.toString
     replacement := ← abstractMVars replacement
   }
-  return some
-    { lem with proof, replacement, extraGoals, makesNewMVars, isRefl, info, justLemmaName }
+  return some { lem with
+    proof, replacement, extraGoals, makesNewMVars, isRefl, info, justLemmaName, hyp?, occ }
 
 def RewriteInfo.lt (a b : RewriteInfo) : Bool :=
   Ordering.isLT <|
@@ -234,13 +153,12 @@ def RewriteInfo.isDuplicate (a b : RewriteInfo) : MetaM Bool :=
 open Widget ProofWidgets Jsx Server
 
 /-- Return the rewrite tactic that performs the rewrite. -/
-def tacticSyntax (rw : Rewrite) (pasteInfo : RwPasteInfo) :
-    MetaM (TSyntax `tactic) := do
-  let proof ← if rw.justLemmaName then
-      `(term| $(mkIdent <| ← rw.name.unresolveName))
+def tacticSyntax (grw : GRewrite) : MetaM (TSyntax `tactic) := do
+  let proof ← if grw.justLemmaName then
+      `(term| $(mkIdent <| ← grw.name.unresolveName))
     else
-      withOptions (pp.mvars.set · false) (PrettyPrinter.delab rw.proof)
-  mkRewrite pasteInfo.occ rw.symm proof pasteInfo.hyp? (g := true)
+      withOptions (pp.mvars.set · false) (PrettyPrinter.delab grw.proof)
+  mkRewrite grw.occ grw.symm proof grw.hyp? (g := true)
 
 /-- `RwResult` stores the information from a rewrite lemma that was successful. -/
 structure RwResult where
@@ -260,32 +178,32 @@ instance : LT RwResult where
 instance : DecidableLT RwResult := fun a b => by
   dsimp [LT.lt]; infer_instance
 
-/-- Construct the `Result` from a `Rewrite`. -/
-def Rewrite.toResult (rw : Rewrite) (pasteInfo : RwPasteInfo) : MetaM RwResult := do
-  let tactic ← tacticSyntax rw pasteInfo
-  let replacement ← ppExprTagged rw.replacement
+/-- Construct the `Result` from a `GRewrite`. -/
+def GRewrite.toResult (grw : GRewrite) (pasteInfo : PasteInfo) : MetaM RwResult := do
+  let tactic ← tacticSyntax grw
+  let replacement ← ppExprTagged grw.replacement
   let mut extraGoals := #[]
-  for (mvarId, bi) in rw.extraGoals do
+  for (mvarId, bi) in grw.extraGoals do
     -- TODO: think more carefully about which goals should be displayed
     -- Are there lemmas where a hypothesis is marked as implicit,
     -- which we would still want to show as a new goal?
     if bi.isExplicit then
       extraGoals := extraGoals.push (← ppExprTagged (← mvarId.getType))
-  let prettyLemma ← ppPremiseTagged rw.name
+  let prettyLemma ← ppPremiseTagged grw.name
   let html (showNames : Bool) :=
-    mkSuggestionElement tactic pasteInfo.toPasteInfo <|
+    mkSuggestionElement tactic pasteInfo <|
     let extraGoals := extraGoals.flatMap fun extraGoal =>
       #[<div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={extraGoal}/> </div>];
     .element "div" #[] <|
       #[<InteractiveCode fmt={replacement}/>] ++ extraGoals ++
         if showNames then #[<div> <InteractiveCode fmt={prettyLemma}/> </div>] else #[]
-  let lemmaType ← match rw.name with
+  let lemmaType ← match grw.name with
     | .const name => (·.type) <$> getConstInfo name
     | .fvar fvarId => inferType (.fvar fvarId)
   return {
-    filtered := ← if !rw.isRefl && !rw.makesNewMVars then (some <$> html false) else pure none
+    filtered := ← if !grw.isRefl && !grw.makesNewMVars then (some <$> html false) else pure none
     unfiltered := ← html true
-    info := rw.info
+    info := grw.info
     pattern := ← pattern lemmaType
   }
 where
@@ -295,7 +213,7 @@ where
     forallTelescopeReducing type fun _ e => do
       let .app (.app _ lhs) rhs := (← instantiateMVars e).cleanupAnnotations
         | throwError "Expected relation, not {indentExpr e}"
-      ppExprTagged <| if rw.symm then rhs else lhs
+      ppExprTagged <| if grw.symm then rhs else lhs
 
 /-- `generateSuggestion` is called in parallel for all rewrite lemmas.
 - If the lemma succeeds, return a `RwResult`.
@@ -305,13 +223,14 @@ where
 Note: we use two `try`-`catch` clauses, because we rely on `ppConstTagged`
 in the first `catch` branch, which could (in principle) throw an error again.
 -/
-def generateSuggestion (expr : Expr) (pasteInfo : RwPasteInfo) (gpos : GRewritePos)
-    (pos : ExprWithPos) (lem : GRewriteLemma) : MetaM <| Task (Except Html <| Option RwResult) := do
+def generateSuggestion (rootExpr : Expr) (subExpr : SubExpr) (pasteInfo : PasteInfo)
+    (gpos : GRewritePos) (hyp? : Option Name) (occ : Option Nat) (lem : GRewriteLemma) :
+    MetaM <| Task (Except Html <| Option RwResult) := do
   BaseIO.asTask <| EIO.catchExceptions (← dropM do withCurrHeartbeats do
     have : MonadExceptOf _ MetaM := MonadAlwaysExcept.except
     try .ok <$> withNewMCtxDepth do
       Core.checkSystem "infoview_search"
-      let some rewrite ← checkGRewrite lem expr gpos pos | return none
+      let some rewrite ← checkGRewrite lem rootExpr subExpr gpos hyp? occ | return none
       some <$> rewrite.toResult pasteInfo
     catch e => withCurrHeartbeats do
       return .error
@@ -340,7 +259,7 @@ structure SectionState where
   /-- The computations for rewrite theorems that have not finished evaluating. -/
   pending : Array (Task (Except Html <| Option RwResult))
 
-def updateSectionState (s : SectionState) : MetaM (Array Html × SectionState) := do
+def SectionState.update (s : SectionState) : MetaM (Array Html × SectionState) := do
   let mut pending := #[]
   let mut results := s.results
   let mut exceptions := #[]
@@ -371,12 +290,12 @@ where
       pure res.filtered.isSome <&&> res.info.isDuplicate result.info
 
 /-- Render one section of rewrite results. -/
-def renderSection (filter : Bool) (s : SectionState) : Option Html := do
+def SectionState.render (filter : Bool) (s : SectionState) : Option Html := do
   let head ← s.results[0]?
   let suffix := match s.kind with
     | .hypothesis => " (local hypotheses)"
     | .fromFile => " (lemmas from current file)"
-    | .fromCache => ""
+    | .fromImport => ""
   let suffix := if s.pending.isEmpty then suffix else suffix ++ " ⏳"
   let htmls := if filter then s.results.filterMap (·.filtered) else s.results.map (·.unfiltered)
   guard (!htmls.isEmpty)

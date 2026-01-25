@@ -30,6 +30,9 @@ def getHtmlComponentProps {Props} [RpcEncodable Props] (html : Html) (c : Compon
     if hash == FilterDetails.javascriptHash then
       let props : FilterDetailsProps ← getProps lazy
       arr ← getHtmlComponentProps props.all c arr
+    if hash == RefreshComponent.javascriptHash then
+      let props : RefreshComponentProps ← getProps lazy
+      arr ← getHtmlComponentProps (← props.state.val.get).curr.html c arr
     htmls.foldlM (fun arr html ↦ getHtmlComponentProps html c arr) arr
 where
   getProps {Props} [RpcEncodable Props] (lazy : LazyEncodable Json) :
@@ -56,13 +59,11 @@ scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic
   let text ← getFileMap
   let some cursorPos := (← getRef).getPos? | throwError "found no valid cursor position"
   let cursorPos := text.utf8PosToLspPos cursorPos
-  let k : RefreshT MetaM Unit := generateSuggestions { loc, mvarId }
-    { (default : DocumentMeta) with text } cursorPos none default none
-  let promise ← IO.Promise.new
-  let promiseRef ← IO.mkRef promise
-  let ref ← IO.mkRef { curr := { html := default, idx := 0 }, next := promise.result? }
-  k ref promiseRef
-  let html := (← ref.get).curr.html
+  let pasteInfo := {
+    «meta» := { (default : DocumentMeta) with text }, cursorPos, onGoal := none, stx := default }
+  let token ← RefreshToken.new default
+  generateSuggestions { loc, mvarId } pasteInfo none token
+  let html := (← token.ref.get).curr.html
   let props ← getHtmlComponentProps html MakeEditLink #[]
   let suggested := props.flatMap (·.edit.edits.map (·.newText))
   for expected in expecteds do

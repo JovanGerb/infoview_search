@@ -1,6 +1,6 @@
 module
 
-public import InfoviewSearch.Unfold
+public import InfoviewSearch.Util
 
 public meta section
 
@@ -75,8 +75,7 @@ def renderInduction (loc : SubExpr.GoalLocation) (pasteInfo : PasteInfo) : MetaM
   let tactic ← `(tactic| induction $(mkIdent name):ident $[using $usingClause]?)
   mkSuggestionElement (isText := true) ⟨tactic.1⟩ pasteInfo <| .text s!"induction on {name}"
 
-def renderTactic (e : Expr) (occ : Option Nat) (location : Option Name)
-    (loc : SubExpr.GoalsLocation) (pasteInfo : PasteInfo) : MetaM (Array Html) := do
+def renderTactic (loc : SubExpr.GoalsLocation) (pasteInfo : PasteInfo) : MetaM (Option Html) := do
   let mut tactics := #[]
   if let some html ← renderRfl loc pasteInfo then
     tactics := tactics.push html
@@ -84,11 +83,9 @@ def renderTactic (e : Expr) (occ : Option Nat) (location : Option Name)
     tactics := tactics.push html
   if let some html ← renderIntro loc pasteInfo then
     tactics := tactics.push html
-  let mut htmls := #[]
   if !tactics.isEmpty then
-    htmls := htmls.push <| mkListElement tactics <| .text "tactics"
-  if let some html ← InteractiveUnfold.renderUnfolds e occ location pasteInfo then
-    htmls := htmls.push html
-  return htmls
+    return mkListElement tactics <| .text "tactics"
+  else
+    return none
 
 end InfoviewSearch
