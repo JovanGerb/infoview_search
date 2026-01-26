@@ -18,7 +18,7 @@ public meta section
 namespace InfoviewSearch.Test
 open Lean Meta SubExpr ProofWidgets RefreshComponent Server
 
-def getHtmlComponentProps {Props} [RpcEncodable Props] (html : Html) (c : Component Props)
+partial def getHtmlComponentProps {Props} [RpcEncodable Props] (html : Html) (c : Component Props)
     (arr : Array Props) : CoreM (Array Props) := do
   match html with
   | .element _ _ htmls => htmls.foldlM (fun arr html ↦ getHtmlComponentProps html c arr) arr
