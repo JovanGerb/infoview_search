@@ -172,16 +172,16 @@ def updateWidgetState (state : WidgetState) : MetaM WidgetState := do
   return { state with sections, exceptions }
 
 public def WidgetState.render (state : WidgetState)
-    (rewriteTarget : CodeWithInfos) : Html :=
+    (ppSubExpr : CodeWithInfos) : Html :=
   <FilterDetails
     summary={state.header}
-    all={go false state rewriteTarget}
-    filtered={go true state rewriteTarget}
+    all={go false state ppSubExpr}
+    filtered={go true state ppSubExpr}
     initiallyFiltered={true} />
 where
-  /-- Render all of the sections of rewrite results -/
+  /-- Render all of the sections of lemma suggestions -/
   go (filter : Bool) (state : WidgetState)
-      (rewriteTarget : CodeWithInfos) : Html :=
+      (ppSubExpr : CodeWithInfos) : Html :=
     let htmls := state.sections.filterMap fun
       | .rw s | .grw s | .app s | .appAt s => s.render filter
     let htmls := if state.importTask?.isNone then htmls else
@@ -190,7 +190,7 @@ where
       | some html => htmls.push html
       | none => htmls
     if htmls.isEmpty then
-      <p> No lemma suggestions found for <InteractiveCode fmt={rewriteTarget}/> </p>
+      <p> No lemma suggestions found for <InteractiveCode fmt={ppSubExpr}/> </p>
     else
       .element "div" #[("style", json% {"marginLeft" : "4px"})] htmls
   /-- Render the error messages -/
@@ -206,9 +206,9 @@ where
 
 /-- Repeatedly run `updateWidgetState` until there is an update, and then return the result. -/
 public partial def WidgetState.repeatRefresh (state : WidgetState)
-    (rewriteTarget : CodeWithInfos) (token : RefreshToken) : MetaM Unit := do
+    (ppSubExpr : CodeWithInfos) (token : RefreshToken) : MetaM Unit := do
   -- If there is nothing to compute, return the final (empty) display
-  token.refresh (state.render rewriteTarget)
+  token.refresh (state.render ppSubExpr)
   let mut state := state
   while !state.sections.all (·.isFinished) || state.importTask?.isSome do
     Core.checkSystem "infoview_search"
@@ -218,6 +218,6 @@ public partial def WidgetState.repeatRefresh (state : WidgetState)
       IO.sleep 10
       Core.checkSystem "infoview_search"
     state ← updateWidgetState state
-    token.refresh (state.render rewriteTarget)
+    token.refresh (state.render ppSubExpr)
 
 end InfoviewSearch
