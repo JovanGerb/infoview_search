@@ -178,24 +178,43 @@ def PreDiscrTrees.append (pres : PreDiscrTrees) (maps : Entries) : PreDiscrTrees
   app := maps.app.foldl (init := pres.app) fun pre (key, e) ↦ pre.push key e
   appAt := maps.appAt.foldl (init := pres.appAt) fun pre (key, e) ↦ pre.push key e
 
-public initialize rwRef : IO.Ref (Option (RefinedDiscrTree RewriteLemma)) ← IO.mkRef none
-public initialize grwRef : IO.Ref (Option (RefinedDiscrTree GRewriteLemma)) ← IO.mkRef none
-public initialize appRef : IO.Ref (Option (RefinedDiscrTree ApplyLemma)) ← IO.mkRef none
-public initialize appAtRef : IO.Ref (Option (RefinedDiscrTree ApplyAtLemma)) ← IO.mkRef none
+public initialize rwRef : IO.Ref (Option (Task (Option (RefinedDiscrTree RewriteLemma)))) ←
+  IO.mkRef none
+public initialize grwRef : IO.Ref (Option (Task (Option (RefinedDiscrTree GRewriteLemma)))) ←
+  IO.mkRef none
+public initialize appRef : IO.Ref (Option (Task (Option (RefinedDiscrTree ApplyLemma)))) ←
+  IO.mkRef none
+public initialize appAtRef : IO.Ref (Option (Task (Option (RefinedDiscrTree ApplyAtLemma)))) ←
+  IO.mkRef none
+
+def setRefIfNone {α} [Nonempty α] (ref : IO.Ref (Option (Task (Option α)))) :
+    BaseIO (Option (IO.Promise α)) := unsafe do
+  match ← ref.take with
+  | some val =>
+    ref.set val
+    return none
+  | none => do
+    let promise ← IO.Promise.new
+    ref.set promise.result?
+    return some promise
 
 public def computeImportDiscrTrees (choice : Choice) : CoreM Unit := do
+  let rwProm? ← if choice.rw then setRefIfNone rwRef else pure none
+  let grwProm? ← if choice.grw then setRefIfNone grwRef else pure none
+  let appProm? ← if choice.app then setRefIfNone appRef else pure none
+  let appAtProm? ← if choice.appAt then setRefIfNone appAtRef else pure none
   let choice := {
-    rw := ← pure choice.rw <&&> (·.isNone) <$> rwRef.get
-    grw := ← pure choice.grw <&&> (·.isNone) <$> grwRef.get
-    app := ← pure choice.app <&&> (·.isNone) <$> appRef.get
-    appAt := ← pure choice.appAt <&&> (·.isNone) <$> appAtRef.get
+    rw := rwProm?.isSome
+    grw := grwProm?.isSome
+    app := appProm?.isSome
+    appAt := appAtProm?.isSome
   }
   let (tasks, errors) ← foldEnv {} (Entries.addConst choice) 5000
   let pre : PreDiscrTrees := tasks.foldl (·.append ·.get) {}
-  if choice.rw then rwRef.set pre.rw.toRefinedDiscrTree
-  if choice.grw then grwRef.set pre.grw.toRefinedDiscrTree
-  if choice.app then appRef.set pre.app.toRefinedDiscrTree
-  if choice.appAt then appAtRef.set pre.appAt.toRefinedDiscrTree
+  rwProm?.forM (·.resolve pre.rw.toRefinedDiscrTree)
+  grwProm?.forM (·.resolve pre.grw.toRefinedDiscrTree)
+  appProm?.forM (·.resolve pre.app.toRefinedDiscrTree)
+  appAtProm?.forM (·.resolve pre.appAt.toRefinedDiscrTree)
   --TODO: Maybe we should rather panic, because the logging messages will be discarded...
   logImportFailures errors
 
@@ -215,11 +234,19 @@ public def computeLCtxDiscrTrees (choice : Choice) (fvarId? : Option FVarId) :
   return .append {} entries
 
 
-public def getImportMatches {α} (ref : IO.Ref (Option (RefinedDiscrTree α))) (e : Expr) :
-    MetaM (MatchResult α) := do
-  let some tree ← ref.swap none | throwError "The discrimination tree was not computed"
+public partial def getImportMatches {α} (ref : IO.Ref (Option (Task (Option (RefinedDiscrTree α)))))
+    (e : Expr) : MetaM (MatchResult α) := do
+  let promise ← IO.Promise.new
+  let some tree ← ref.swap (some promise.result?) |
+    throwError "Internal infoview_search error: the discrimination tree was not computed"
+  let some tree := tree.get |
+    -- This happens if the reference to the promise was dropped, which should never happen.
+    (panic! "reference to discr tree promise was dropped" : BaseIO Unit)
+    ref.set none
+    computeImportDiscrTrees { rw := true, grw := true, app := true, appAt := true }
+    getImportMatches ref e
   let (candidates, tree) ← getMatch tree e false false
-  ref.set (some tree)
+  promise.resolve tree
   MonadExcept.ofExcept candidates
 
 public def getMatches {α} (tree : RefinedDiscrTree α) (e : Expr) : MetaM (MatchResult α) := do
