@@ -1,6 +1,6 @@
 module
 
-public import InfoviewSearch.FindCandidates
+public import InfoviewSearch.Search.FindCandidates
 public import InfoviewSearch.RefreshComponent
 public import ProofWidgets.Component.FilterDetails
 

@@ -1,6 +1,6 @@
 module
 
-public import InfoviewSearch.TryCandidates
+public import InfoviewSearch.Search.TryCandidates
 public import InfoviewSearch.Tactics
 public import InfoviewSearch.Unfold
 public meta import Mathlib.Lean.Meta.KAbstractPositions

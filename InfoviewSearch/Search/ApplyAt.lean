@@ -1,6 +1,6 @@
 module
 
-public import InfoviewSearch.SectionState
+public import InfoviewSearch.Search.SectionState
 public import Mathlib.Tactic.ApplyAt
 
 public meta section

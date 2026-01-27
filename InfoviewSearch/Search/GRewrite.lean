@@ -5,7 +5,7 @@ Authors: Jovan Gerbscheid, Anand Rao
 -/
 module
 
-public import InfoviewSearch.SectionState
+public import InfoviewSearch.Search.SectionState
 public import Mathlib.Order.Antisymmetrization
 
 public meta section

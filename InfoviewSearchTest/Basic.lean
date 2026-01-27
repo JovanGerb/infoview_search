@@ -3,7 +3,7 @@ module
 import Mathlib.Order.Basic
 import Mathlib.Data.Nat.ModEq
 import Mathlib.Data.Set.Basic
-import InfoviewSearchTest.Defs
+import InfoviewSearchTest.TestTactic
 
 /-!
 This file tests some basic features of `#infoview_search`

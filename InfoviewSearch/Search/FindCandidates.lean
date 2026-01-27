@@ -1,10 +1,10 @@
 module
 
-public import InfoviewSearch.Rewrite
-public import InfoviewSearch.GRewrite
-public import InfoviewSearch.Apply
-public import InfoviewSearch.ApplyAt
-public meta import InfoviewSearch.Initialize
+public import InfoviewSearch.Search.Rewrite
+public import InfoviewSearch.Search.GRewrite
+public import InfoviewSearch.Search.Apply
+public import InfoviewSearch.Search.ApplyAt
+public meta import InfoviewSearch.Search.FoldEnv
 
 /-!
 # Discrimination tree lookup

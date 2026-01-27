@@ -1,6 +1,6 @@
 module
 
-public import InfoviewSearch.SectionState
+public import InfoviewSearch.Search.SectionState
 
 public meta section
 
