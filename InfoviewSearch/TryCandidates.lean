@@ -19,36 +19,41 @@ inductive Candidates where
   | app (arr : Array Apply.ApplyLemma)
   | appAt (hyp : Name) (arr : Array ApplyAt.ApplyAtLemma)
 
-def getImportCandidates (rootExpr : Expr) (subExpr : SubExpr) (gpos? : Option Grw.GRewritePos)
+def getImportCandidates (rootExpr : Expr) (subExpr : SubExpr) (gpos : Array Grw.GRewritePos)
     (hyp? : Option Name) : MetaM (Array Candidates) := do
-  let mut cands :=
+  let mut cands : Std.TreeMap _ _ _ := {}
+  /- The order in which we show the suggestions for the same pattern for different tactics
+  depends on the following insertion order.
+  We choose the order `grw` => `rw` => `apply(at)`. -/
+  if !gpos.isEmpty then
+    cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
+      (← getImportMatches grwRef subExpr.expr).elts.map fun _ ↦ (·.map (.grw hyp?))
+  cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
     (← getImportMatches rwRef subExpr.expr).elts.map fun _ ↦ (·.map (.rw hyp?))
   if subExpr.pos == .root then
     if let some hyp := hyp? then
-      cands := cands.mergeWith (fun _ a b ↦ a ++ b) <|
+      cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
         (← getImportMatches appAtRef rootExpr).elts.map fun _ ↦ (·.map (.appAt hyp))
     else
-      cands := cands.mergeWith (fun _ a b ↦ a ++ b) <|
+      cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
         (← getImportMatches appRef rootExpr).elts.map fun _ ↦ (·.map .app)
-  if gpos?.isSome then
-    cands := cands.mergeWith (fun _ a b ↦ a ++ b) <|
-      (← getImportMatches grwRef subExpr.expr).elts.map fun _ ↦ (·.map (.grw hyp?))
   return cands.foldr (init := #[]) fun _ val acc ↦ acc ++ val
 
-def getCandidates (rootExpr : Expr) (subExpr : SubExpr) (pres : PreDiscrTrees)
-    (gpos? : Option Grw.GRewritePos) (hyp? : Option Name) : MetaM (Array Candidates) := do
-  let mut cands :=
+def getCandidates (rootExpr : Expr) (subExpr : SubExpr) (gpos : Array Grw.GRewritePos)
+    (hyp? : Option Name) (pres : PreDiscrTrees) : MetaM (Array Candidates) := do
+  let mut cands : Std.TreeMap _ _ _ := {}
+  if !gpos.isEmpty then
+    cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
+      (← getMatches pres.grw.toRefinedDiscrTree subExpr.expr).elts.map fun _ ↦ (·.map (.grw hyp?))
+  cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
     (← getMatches pres.rw.toRefinedDiscrTree subExpr.expr).elts.map fun _ ↦ (·.map (.rw hyp?))
   if subExpr.pos == .root then
     if let some hyp := hyp? then
-      cands := cands.mergeWith (fun _ a b ↦ a ++ b) <|
+      cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
         (← getMatches pres.appAt.toRefinedDiscrTree rootExpr).elts.map fun _ ↦ (·.map (.appAt hyp))
     else
-      cands := cands.mergeWith (fun _ a b ↦ a ++ b) <|
+      cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
         (← getMatches pres.app.toRefinedDiscrTree rootExpr).elts.map fun _ ↦ (·.map .app)
-  if gpos?.isSome then
-    cands := cands.mergeWith (fun _ a b ↦ a ++ b) <|
-      (← getMatches pres.grw.toRefinedDiscrTree subExpr.expr).elts.map fun _ ↦ (·.map (.grw hyp?))
   return cands.foldr (init := #[]) fun _ val acc ↦ acc ++ val
 
 public inductive SectionsState where
@@ -63,15 +68,16 @@ def SectionsState.isFinished : SectionsState → Bool
 def SectionsState.hasProgressed : SectionsState → BaseIO Bool
   | .rw s | .grw s | .app s | .appAt s => s.pending.anyM IO.hasFinished
 
-private def Candidates.generateSuggestion (rootExpr : Expr) (subExpr : SubExpr)
+private def Candidates.generateSuggestions (rootExpr : Expr) (subExpr : SubExpr)
     (pasteInfo : PasteInfo) (occ : LOption Nat)
-    (kind : PremiseKind) (gpos : Option Grw.GRewritePos) :
+    (kind : PremiseKind) (gpos : Array Grw.GRewritePos) :
     Candidates → MetaM SectionsState
   | .rw hyp? arr => do
     let arr ← arr.mapM (Rw.generateSuggestion rootExpr subExpr pasteInfo hyp? occ)
     return .rw { kind, results := #[], pending := arr }
   | .grw hyp? arr => do
-    let some gpos := gpos | return .grw { kind, results := #[], pending := #[]}
+    if gpos.isEmpty then
+      return .grw { kind, results := #[], pending := #[]}
     let arr ← arr.mapM (Grw.generateSuggestion rootExpr subExpr pasteInfo gpos hyp? occ)
     return .grw { kind, results := #[], pending := arr }
   | app arr => do
@@ -102,35 +108,36 @@ public def initializeWidgetState (rootExpr : Expr) (subExpr : SubExpr) (pasteInf
   Core.checkSystem "infoview_search"
   let mut sections := #[]
 
-  let gpos? ← Grw.getGRewritePos? rootExpr subExpr fvarId?.isSome
+  let gpos ← Grw.getGRewritePos? rootExpr subExpr fvarId?.isSome
   let choice : Choice := {
     rw := true
-    grw := gpos?.isSome
+    grw := !gpos.isEmpty
     app := subExpr.pos == .root && fvarId?.isNone
     appAt := subExpr.pos == .root && fvarId?.isSome
   }
   let pres ← computeLCtxDiscrTrees choice fvarId?
   let hyp? ← fvarId?.mapM (·.getUserName)
   Core.checkSystem "infoview_search"
-  for cand in ← getCandidates rootExpr subExpr pres gpos? hyp? do
+  for cand in ← getCandidates rootExpr subExpr gpos hyp? pres do
     sections := sections.push
-      (← cand.generateSuggestion rootExpr subExpr pasteInfo occ .hypothesis gpos?)
+      (← cand.generateSuggestions rootExpr subExpr pasteInfo occ .hypothesis gpos)
 
   let pres ← computeModuleDiscrTrees choice parentDecl?
   Core.checkSystem "infoview_search"
-  for cand in ← getCandidates rootExpr subExpr pres gpos? hyp? do
+  for cand in ← getCandidates rootExpr subExpr gpos hyp? pres do
     sections := sections.push
-      (← cand.generateSuggestion rootExpr subExpr pasteInfo occ .fromFile gpos?)
+      (← cand.generateSuggestions rootExpr subExpr pasteInfo occ .fromFile gpos)
 
   Core.checkSystem "infoview_search"
   let importTask? := some <| ← EIO.asTask <| ← dropM (m := MetaM) do
     computeImportDiscrTrees choice
-    (← getImportCandidates rootExpr subExpr gpos? hyp?).mapM
-      (·.generateSuggestion rootExpr subExpr pasteInfo occ .fromImport gpos?)
+    (← getImportCandidates rootExpr subExpr gpos hyp?).mapM
+      (·.generateSuggestions rootExpr subExpr pasteInfo occ .fromImport gpos)
 
   return {
     sections, importTask?, exceptions := #[]
-    header := <span> Suggestions for <InteractiveCode fmt={← ppExprTagged subExpr.expr}/>: </span> }
+    header :=
+      <span> Lemma suggestions for <InteractiveCode fmt={← ppExprTagged subExpr.expr}/>: </span> }
 
 /-- If `state.importTask?` has been evaluated, append the result to `section`. -/
 def updateImportTask (state : WidgetState) : EIO Exception WidgetState := do
@@ -177,7 +184,10 @@ where
   go (filter : Bool) (state : WidgetState)
       (ppSubExpr : CodeWithInfos) : Html :=
     let htmls := state.sections.filterMap fun
-      | .rw s | .grw s | .app s | .appAt s => s.render filter
+      | .rw s => s.render filter "rw"
+      | .grw s => s.render filter "grw"
+      | .app s => s.render filter "apply"
+      | .appAt s => s.render filter "apply at"
     let htmls := if state.importTask?.isNone then htmls else
       htmls.push <| .text "Imported theorems are being loaded..."
     let htmls := match renderExceptions state.exceptions with

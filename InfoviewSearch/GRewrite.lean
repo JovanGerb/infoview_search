@@ -6,6 +6,7 @@ Authors: Jovan Gerbscheid, Anand Rao
 module
 
 public import InfoviewSearch.SectionState
+public import Mathlib.Order.Antisymmetrization
 
 public meta section
 
@@ -15,6 +16,112 @@ namespace InfoviewSearch.Grw
 
 open Lean Meta Mathlib.Tactic
 
+/-- `GRewritePos` contains the ìnformation about a given subexpression position needed for
+applying a  `grw` lemma. -/
+structure GRewritePos where
+  /-- The name of the relation. -/
+  relName : Name
+  /-- The expression of the relation. -/
+  relation : Expr
+  /-- `symm` is `none` if the given relations are symmetric.
+  `symm` is `true` when you can only rewrite from right to left. -/
+  symm? : Option Bool
+
+/-! ### Checking rewrite lemmas -/
+
+/-- Given the relation that we can use to rewrite at the give position, figure out all of the
+subrelations that could be used instead. -/
+private def gcongrBackward (relName : Name) (relation : Expr) (symm : Bool) :
+    MetaM (Array GRewritePos) := do
+  let type ← inferType relation
+  let α ← mkFreshTypeMVar
+  unless ← isDefEq type (.forallE `_ α (.forallE `_ α (.sort 0) .default) .default) do
+    throwError "invalid relation {relation}"
+  let α ← instantiateMVars α
+  let u ← getDecLevel α
+  withLocalDeclD `a α fun a ↦ do
+  withLocalDeclD `b α fun b ↦ do
+  withNewMCtxDepth do
+  -- Any relation `r` can be proved from `AntisymmRel r`, so we add this as a possible relation
+  let antiSymm := mkApp2 (.const ``AntisymmRel [u]) α relation
+  let mut result : Array GRewritePos :=
+    #[{ relName := ``AntisymmRel, relation := antiSymm, symm? := none }]
+  -- If `relName` is symmetric, then include the reverse as a possible relation (`symm? := none`)
+  let symm? ← try
+    let dummyVar ← mkFreshExprMVar (mkApp2 relation a b)
+    if let mkApp2 relation' b' a' ← inferType (← dummyVar.applySymm) then
+      if relation' == relation && b == b' && a == a' then
+        pure none
+      else
+        pure symm
+    else
+      pure symm
+    catch _ => pure symm
+  result := result.push { relName, relation, symm? }
+  -- For `≤` and `⊆` we add `<` and `⊂` respectively as possible relations.
+  match relName with
+  | ``LE.le =>
+    if let some pos ← tryApply ``le_of_lt ``LT.lt then
+      result := result.push pos
+  | ``HasSubset.Subset =>
+    if let some pos ← tryApply ``subset_of_ssubset ``HasSSubset.SSubset then
+      result := result.push pos
+  | _ => pure ()
+  return result
+where
+  tryApply (appName relName : Name) : MetaM (Option GRewritePos) := do
+    let (mvars, bi, rel) ← forallMetaTelescope (← inferType (← mkConstWithFreshMVarLevels appName))
+    try
+      if ← isDefEq rel.appFn!.appFn! relation then
+        synthAppInstances default default mvars bi false false
+        let rel ← instantiateMVars (← inferType mvars.back!).appFn!.appFn!
+        return some { relName, relation := rel, symm? := symm }
+      return none
+    catch _ =>
+      return none
+
+/-- This function is passed to `MVarId.gcongr` as the main discharger.
+It doesn't try to prove the goal, but instead observes what the goal is,
+to help determine which lemmas could work with `grw`. -/
+private def dummyDischarger (ref : IO.Ref (Array GRewritePos)) (hyp? : Bool) (fvar : Expr)
+    (goal : MVarId) : MetaM Bool := do
+  let relation ← instantiateMVars (← goal.getType)
+  let e@(mkApp2 relation lhs rhs) := relation | throw <| .error default "dummyError"
+  let .const relName _ := relation.getAppFn | throw <| .error default "dummyError"
+  if relName matches ``Eq | ``Iff then throw <| .error default "dummyError"
+  let symm ←
+    if lhs.cleanupAnnotations == fvar then
+      pure hyp?
+    else if rhs.cleanupAnnotations == fvar then
+      pure !hyp?
+    else
+      throwError "{e} doesn't have {fvar} on either side"
+  ref.set (← gcongrBackward relName relation symm)
+  throw <| .error default "dummyError"
+
+/-- Determine possible ways in which a `grw` call could rewrite at the given subexpression. -/
+def getGRewritePos? (rootExpr : Expr) (subExpr : SubExpr) (hyp? : Bool) :
+    MetaM (Array GRewritePos) := do
+  withLocalDeclD `_a (← inferType subExpr.expr) fun fvar => do
+  let root' ← replaceSubexpr (fun _ => pure (GCongr.mkHoleAnnotation fvar)) subExpr.pos rootExpr
+  let imp := Expr.forallE `_a rootExpr root' .default
+  let dummyGoal ← mkFreshExprMVar imp
+  let ref ← IO.mkRef #[]
+  try
+    (discard <| dummyGoal.mvarId!.gcongr false []
+      (mainGoalDischarger := dummyDischarger ref hyp? fvar))
+  catch ex =>
+    if (← ex.toMessageData.toString) != "dummyError" then
+      throw ex
+  let result ← ref.get
+  /- I am not entirely sure if this can come up in practice, but we check that the relation
+  that was found doesn't contain any free variables that are now out of scope. -/
+  for { relation, .. } in result do
+    unless (collectFVars {} relation).fvarIds.all (← getLCtx).contains do
+      return #[]
+  return result
+
+
 /-- The structure for rewrite lemmas stored in the `RefinedDiscrTree`. -/
 structure GRewriteLemma where
   /-- The lemma -/
@@ -23,41 +130,6 @@ structure GRewriteLemma where
   symm : Bool
   /-- `relName` is the relation of the lemma. -/
   relName : Name
-
-structure GRewritePos where
-  relation : Expr
-  relName : Name
-  symm : Bool
-
--- TODO: when the relation is symmetric, then look up both directions in the discr tree.
-
-/-! ### Checking rewrite lemmas -/
-
-def fakeDischarger (ref : IO.Ref (Option Expr)) (goal : MVarId) : MetaM Bool := do
-  ref.set (← instantiateMVars (← goal.getType))
-  Meta.throwIsDefEqStuck
-
-def getGRewritePos? (rootExpr : Expr) (subExpr : SubExpr) (hyp? : Bool) :
-    MetaM (Option GRewritePos) := do
-  withLocalDeclD `_a (← inferType subExpr.expr) fun fvar => do
-  let root' ← replaceSubexpr (fun _ => pure (GCongr.mkHoleAnnotation fvar)) subExpr.pos rootExpr
-  let imp := Expr.forallE `_a rootExpr root' .default
-  let gcongrGoal ← mkFreshExprMVar imp
-  let ref ← IO.mkRef none
-  try
-    catchInternalId isDefEqStuckExceptionId
-      (discard <| gcongrGoal.mvarId!.gcongr false [] (mainGoalDischarger := fakeDischarger ref))
-      fun _ => pure ()
-  catch _ =>
-    return none
-  let some e@(.app (.app relation lhs) rhs) ← ref.get | return none
-  let .const relName _ := relation.getAppFn | return none
-  if relName matches ``Eq | ``Iff then return none
-  let symm ←
-    if lhs.cleanupAnnotations == fvar then pure hyp?
-    else if rhs.cleanupAnnotations == fvar then pure !hyp?
-    else throwError "{e} doesn't have {fvar} on either side"
-  return some { relation, relName, symm }
 
 structure ResultId where
   numGoals : Nat
@@ -89,20 +161,20 @@ structure GRewrite extends GRewriteLemma where
 
 set_option linter.style.emptyLine false in
 /-- If `thm` can be used to rewrite `e`, return the rewrite. -/
-def checkGRewrite (lem : GRewriteLemma) (rootExpr : Expr) (subExpr : SubExpr) (gpos : GRewritePos)
-    (hyp? : Option Name) (occ : LOption Nat) : MetaM (Option GRewrite) := withReducible do
+def checkGRewrite (lem : GRewriteLemma) (rootExpr : Expr) (subExpr : SubExpr)
+    (pos : Array GRewritePos) (hyp? : Option Name) (occ : LOption Nat) : MetaM (Option GRewrite) :=
+  withReducible do
+  let mctx ← getMCtx
+  Option.join <$> pos.findSomeM? fun pos ↦ do
+  unless lem.relName == pos.relName && pos.symm?.all (· == lem.symm) do return none
+  let (proof, mvars, binderInfos, rel) ← lem.name.forallMetaTelescopeReducing
+  let mkApp2 rel lhs rhs := rel.cleanupAnnotations | return none
+  unless ← isDefEq rel pos.relation do
+    setMCtx mctx; return none
+  some <$> do
   let e := subExpr.expr
-  unless lem.relName == gpos.relName && lem.symm == gpos.symm do
-    return none
-  let thm ← match lem.name with
-    | .const name => mkConstWithFreshMVarLevels name
-    | .fvar fvarId => pure (.fvar fvarId)
   withTraceNodeBefore `infoview_search (return m!
-    "grewriting {e} by {if lem.symm then "← " else ""}{thm}") do
-  let (mvars, binderInfos, eqn) ← forallMetaTelescopeReducing (← inferType thm)
-  let .app (.app rel lhs) rhs := (← instantiateMVars eqn).cleanupAnnotations | return none
-  unless ← isDefEq rel gpos.relation do
-    return none
+    "grewriting {e} by {if lem.symm then "← " else ""}{← lem.name.unresolveName}") do
   let (lhs, rhs) := if lem.symm then (rhs, lhs) else (lhs, rhs)
   let lhsOrig := lhs; let mctxOrig ← getMCtx
   let unifies ← withTraceNodeBefore `infoview_search (return m! "unifying {e} =?= {lhs}")
@@ -110,7 +182,6 @@ def checkGRewrite (lem : GRewriteLemma) (rootExpr : Expr) (subExpr : SubExpr) (g
   unless unifies do return none
   -- just like in `kabstract`, we compare the `HeadIndex` and number of arguments
   let lhs ← instantiateMVars lhs
-  -- TODO: if the `headIndex` doesn't match, then use `gsimp` instead of `rw` in the suggestion???
   if lhs.toHeadIndex != e.toHeadIndex || lhs.headNumArgs != e.headNumArgs then
     return none
   try synthAppInstances `infoview_search default mvars binderInfos false false
@@ -126,7 +197,7 @@ def checkGRewrite (lem : GRewriteLemma) (rootExpr : Expr) (subExpr : SubExpr) (g
     extraGoals.anyM fun goal ↦ do
       let type ← instantiateMVars <| ← goal.1.getType
       return (type.findMVar? fun mvarId => mvars.any (·.mvarId! == mvarId)).isSome
-  let proof ← instantiateMVars (mkAppN thm mvars)
+  let proof ← instantiateMVars proof
   let isRefl ← isExplicitEq e replacement
   let justLemmaName ←
     if occ matches .undef then pure true
@@ -195,7 +266,7 @@ where
   This is shown at the header of each section of rewrite results. -/
   pattern (type : Expr) : MetaM CodeWithInfos := withReducible do
     forallTelescopeReducing type fun _ e => do
-      let .app (.app _ lhs) rhs := (← instantiateMVars e).cleanupAnnotations
+      let mkApp2 _ lhs rhs := (← instantiateMVars e).cleanupAnnotations
         | throwError "Expected relation, not {indentExpr e}"
       ppExprTagged <| if grw.symm then rhs else lhs
 
@@ -208,7 +279,7 @@ Note: we use two `try`-`catch` clauses, because we rely on `ppConstTagged`
 in the first `catch` branch, which could (in principle) throw an error again.
 -/
 def generateSuggestion (rootExpr : Expr) (subExpr : SubExpr) (pasteInfo : PasteInfo)
-    (gpos : GRewritePos) (hyp? : Option Name) (occ : LOption Nat) (lem : GRewriteLemma) :
+    (gpos : Array GRewritePos) (hyp? : Option Name) (occ : LOption Nat) (lem : GRewriteLemma) :
     MetaM <| Task (Except Html <| Option (Result ResultId)) := do
   BaseIO.asTask <| EIO.catchExceptions (← dropM do withCurrHeartbeats do
     have : MonadExceptOf _ MetaM := MonadAlwaysExcept.except

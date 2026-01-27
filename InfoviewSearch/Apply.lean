@@ -33,11 +33,9 @@ structure Application extends ApplyLemma where
 set_option linter.style.emptyLine false in
 /-- If `thm` can be used to apply to `e`, return the applications. -/
 def checkApplication (lem : ApplyLemma) (target : Expr) : MetaM (Option Application) := do
-  let thm ← match lem.name with
-    | .const name => mkConstWithFreshMVarLevels name
-    | .fvar fvarId => pure (.fvar fvarId)
-  withTraceNodeBefore `infoview_search (return m!"applying {thm} to {target}") do
-  let (mvars, binderInfos, e) ← forallMetaTelescopeReducing (← inferType thm)
+  let (proof, mvars, binderInfos, e) ← lem.name.forallMetaTelescopeReducing
+  withTraceNodeBefore `infoview_search
+    (return m!"applying {← lem.name.unresolveName} to {target}") do
   let unifies ← withTraceNodeBefore `infoview_search (return m! "unifying {e} =?= {target}")
     (withReducible (isDefEq e target))
   unless unifies do return none
@@ -51,7 +49,7 @@ def checkApplication (lem : ApplyLemma) (target : Expr) : MetaM (Option Applicat
   let makesNewMVars ← newGoals.anyM fun goal => do
     let type ← instantiateMVars <| ← goal.1.getType
     return (type.findMVar? fun mvarId => mvars.any (·.mvarId! == mvarId)).isSome
-  let proof ← instantiateMVars (mkAppN thm mvars)
+  let proof ← instantiateMVars proof
   let info := {
     numGoals := newGoals.size
     nameLenght := lem.name.length

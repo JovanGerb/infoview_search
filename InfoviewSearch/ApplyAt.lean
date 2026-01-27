@@ -37,11 +37,8 @@ structure Application extends ApplyAtLemma where
 set_option linter.style.emptyLine false in
 /-- If `thm` can be used to apply to `e`, return the applications. -/
 def checkApplication (lem : ApplyAtLemma) (e : Expr) (hyp : Name) : MetaM (Option Application) := do
-  let thm ← match lem.name with
-    | .const name => mkConstWithFreshMVarLevels name
-    | .fvar fvarId => pure (.fvar fvarId)
-  withTraceNodeBefore `infoview_search (return m!"applying {thm} to {e}") do
-  let (mvars, binderInfos, replacement) ← forallMetaTelescopeReducing (← inferType thm)
+  let (proof, mvars, binderInfos, replacement) ← lem.name.forallMetaTelescopeReducing
+  withTraceNodeBefore `infoview_search (return m!"applying {← lem.name.unresolveName} to {e}") do
   let assume ← inferType mvars.back!
   let mvars := mvars.pop
   let unifies ← withTraceNodeBefore `infoview_search (return m! "unifying {assume} =?= {e}")
@@ -60,7 +57,7 @@ def checkApplication (lem : ApplyAtLemma) (e : Expr) (hyp : Name) : MetaM (Optio
     newGoals.anyM fun goal ↦ do
       let type ← instantiateMVars <| ← goal.1.getType
       return (type.findMVar? fun mvarId => mvars.any (·.mvarId! == mvarId)).isSome
-  let proof ← instantiateMVars (mkAppN thm mvars)
+  let proof ← instantiateMVars proof
   let info := {
     numGoals := newGoals.size
     nameLenght := lem.name.length
@@ -119,7 +116,7 @@ def Application.toResult (app : Application) (pasteInfo : PasteInfo) :
     unfiltered := ← html true
     info := app.info
     pattern := ← forallTelescopeReducing lemmaType fun xs _ => do
-      ppExprTagged (← inferType xs.back!)
+      ppExprTagged (← inferType <| xs.back!)
   }
 
 /-- `generateSuggestion` is called in parallel for all apply lemmas.

@@ -73,7 +73,7 @@ where
       pure res.filtered.isSome <&&> isDup res.info result.info
 
 /-- Render one section of rewrite results. -/
-def SectionState.render (filter : Bool) (s : SectionState α) : Option Html := do
+def SectionState.render (filter : Bool) (s : SectionState α) (tactic : String) : Option Html := do
   let head ← s.results[0]?
   let suffix := match s.kind with
     | .hypothesis => " (local hypotheses)"
@@ -83,6 +83,6 @@ def SectionState.render (filter : Bool) (s : SectionState α) : Option Html := d
   guard (!s.results.isEmpty)
   let htmls := if filter then s.results.filterMap (·.filtered) else s.results.map (·.unfiltered)
   return mkListElement htmls
-    <span> grw: <InteractiveCode fmt={head.pattern}/> {.text suffix} </span>
+    <span> {.text s!"{tactic}: "}<InteractiveCode fmt={head.pattern}/> {.text suffix} </span>
 
 end InfoviewSearch

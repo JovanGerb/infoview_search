@@ -35,8 +35,6 @@ meta section
 namespace InfoviewSearch
 open Lean Meta RefinedDiscrTree Rw Grw Apply ApplyAt
 
--- structure
-
 /-- Return `true` if `s` and `t` are equal up to swapping the `MVarId`s. -/
 def isMVarSwap (t s : Expr) : Bool :=
   go t s {} |>.isSome
@@ -120,7 +118,7 @@ def Entries.addConst (choice : Choice) (entries : Entries) (name : Name) (cinfo 
       if !isBadMatch e then
         appAt ← insertEntry appAt e ⟨.const name⟩
   if choice.rw || choice.grw then
-    if let .app (.app rel lhs) rhs := e then
+    if let mkApp2 rel lhs rhs := e then
       let .const relName _ := rel.getAppFn | pure ()
       -- rw
       if relName matches ``Iff | ``Eq then
@@ -140,7 +138,7 @@ def Entries.addConst (choice : Choice) (entries : Entries) (name : Name) (cinfo 
 
 /-- Given a free variable, compute what needs to be added to the various discrimination trees. -/
 def Entries.addVar (choice : Choice) (entries : Entries) (decl : LocalDecl) : MetaM Entries := do
-  let (xs, _, e) ← forallMetaTelescope decl.type
+  let (xs, _, e) ← forallMetaTelescopeReducing (← instantiateMVars decl.type)
   let mut { rw, grw, app, appAt } := entries
   -- apply
   if choice.app then
@@ -150,20 +148,19 @@ def Entries.addVar (choice : Choice) (entries : Entries) (decl : LocalDecl) : Me
     if let some x := xs.back? then
       let e ← inferType x
       appAt ← insertEntry appAt e ⟨.fvar decl.fvarId⟩
-  if choice.rw || choice.grw then
-    if let .app (.app rel lhs) rhs := e then
-      let .const relName _ := rel.getAppFn | pure ()
-      -- rw
-      if relName matches ``Iff | ``Eq then
-        if choice.rw then
-          rw ← insertEntry rw lhs ⟨.fvar decl.fvarId, false⟩
-          if !isMVarSwap lhs rhs then
-            rw ← insertEntry rw rhs ⟨.fvar decl.fvarId, true⟩
-      -- grw
-      else
-        if choice.grw then
-          grw ← insertEntry grw lhs ⟨.fvar decl.fvarId, false, relName⟩
-          grw ← insertEntry grw rhs ⟨.fvar decl.fvarId, true, relName⟩
+  -- rw
+  if choice.rw then
+    if let mkApp2 rel lhs rhs ← whnf e then
+      if rel.getAppFn matches .const ``Iff _ | .const ``Eq _ then
+        rw ← insertEntry rw lhs ⟨.fvar decl.fvarId, false⟩
+        if !isMVarSwap lhs rhs then
+          rw ← insertEntry rw rhs ⟨.fvar decl.fvarId, true⟩
+  -- grw
+  if choice.grw then
+    if let mkApp2 rel lhs rhs := e.cleanupAnnotations then
+      if let .const relName _ := rel.getAppFn then
+        grw ← insertEntry grw lhs ⟨.fvar decl.fvarId, false, relName⟩
+        grw ← insertEntry grw rhs ⟨.fvar decl.fvarId, true, relName⟩
   return { rw, grw, app, appAt }
 
 public structure PreDiscrTrees where

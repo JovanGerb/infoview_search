@@ -106,13 +106,10 @@ set_option linter.style.emptyLine false in
 def checkRewrite (lem : RewriteLemma) (rootExpr : Expr) (subExpr : SubExpr)
     (hyp? : Option Name) (occ : LOption Nat) : MetaM (Option Rewrite) := do
   let e := subExpr.expr
-  let thm ← match lem.name with
-    | .const name => mkConstWithFreshMVarLevels name
-    | .fvar fvarId => pure (.fvar fvarId)
+  let (proof, mvars, binderInfos, eqn) ← lem.name.forallMetaTelescopeReducing
   withTraceNodeBefore `infoview_search (return m!
-    "rewriting {e} by {if lem.symm then "← " else ""}{thm}") do
-  let (mvars, binderInfos, eqn) ← forallMetaTelescopeReducing (← inferType thm)
-  let .app (.app _ lhs) rhs ← whnf eqn | return none
+    "rewriting {e} by {if lem.symm then "← " else ""}{← lem.name.unresolveName}") do
+  let mkApp2 _ lhs rhs ← whnf eqn | return none
   let (lhs, rhs) := if lem.symm then (rhs, lhs) else (lhs, rhs)
   let lhsOrig := lhs; let mctxOrig ← getMCtx
   let unifies ← withTraceNodeBefore `infoview_search (return m! "unifying {e} =?= {lhs}")
@@ -142,7 +139,7 @@ def checkRewrite (lem : RewriteLemma) (rootExpr : Expr) (subExpr : SubExpr)
     extraGoals.anyM fun goal ↦ do
       let type ← instantiateMVars <| ← goal.1.getType
       return (type.findMVar? fun mvarId => mvars.any (·.mvarId! == mvarId)).isSome
-  let proof ← instantiateMVars (mkAppN thm mvars)
+  let proof ← instantiateMVars proof
   let isRefl ← isExplicitEq e replacement
   if !occ matches .undef && justLemmaName then
     if ← withMCtx mctxOrig do kabstractFindsPositions rootExpr lhsOrig subExpr.pos then
@@ -215,7 +212,7 @@ where
   This is shown at the header of each section of rewrite results. -/
   pattern (type : Expr) : MetaM CodeWithInfos := do
     forallTelescopeReducing type fun _ e => do
-      let .app (.app _ lhs) rhs ← whnf e | throwError "Expected equation, not {indentExpr e}"
+      let mkApp2 _ lhs rhs ← whnf e | throwError "Expected equation, not {indentExpr e}"
       ppExprTagged <| if rw.symm then rhs else lhs
 
 /-- `generateSuggestion` is called in parallel for all rewrite lemmas.

@@ -39,16 +39,30 @@ inductive Premise where
   | fvar (fvarId : FVarId)
   deriving Inhabited
 
-def Premise.toString : Premise → String
+namespace Premise
+
+def toString : Premise → String
   | .const name | .fvar ⟨name⟩ => name.toString
 
-def Premise.length (premise : Premise) : Nat :=
+def length (premise : Premise) : Nat :=
   premise.toString.length
 
-def Premise.unresolveName : Premise → MetaM Name
+def forallMetaTelescopeReducing : Premise → MetaM (Expr × Array Expr × Array BinderInfo × Expr)
   | .const name => do
-  unresolveNameGlobalAvoidingLocals name (fullNames := getPPFullNames (← getOptions))
+    let thm ← mkConstWithFreshMVarLevels name
+    let result ← Meta.forallMetaTelescopeReducing (← inferType thm)
+    return (mkAppN thm result.1, result)
+  | .fvar fvarId => do
+    let decl ← fvarId.getDecl
+    let result ← Meta.forallMetaTelescopeReducing (← instantiateMVars decl.type)
+    return (mkAppN decl.toExpr result.1, result)
+
+def unresolveName : Premise → MetaM Name
+  | .const name => do
+    unresolveNameGlobalAvoidingLocals name (fullNames := getPPFullNames (← getOptions))
   | .fvar fvarId => fvarId.getUserName
+
+end Premise
 
 /-- Pretty print the given constant, making sure not to print the `@` symbol.
 This is a HACK and there should be a more principled way to do this. -/
