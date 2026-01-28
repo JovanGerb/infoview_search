@@ -39,8 +39,16 @@ def getCandidatesAux (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (gpos : Array
   if !gpos.isEmpty then
     cands := cands ++ (← grw subExpr).elts.map fun _ ↦ (·.map <|
       .grw { pasteInfo, rootExpr, subExpr, pos, hyp?, occ, gpos })
-  cands := cands ++ (← rw subExpr).elts.map fun _ ↦ (·.map (.rw <|
-    { pasteInfo, rootExpr, subExpr, pos, hyp?, occ }))
+  let mut rwExpr := subExpr
+  let mut rwPos := pos
+  repeat
+    cands := cands ++ (← rw rwExpr).elts.map fun _ ↦ (·.map (.rw <|
+      { pasteInfo, rootExpr, subExpr := rwExpr, pos := rwPos, hyp?, occ }))
+    match rwExpr with
+    | .app f _ =>
+      rwExpr := f
+      rwPos := rwPos.pushAppFn
+    | _ => break
   if pos == .root then
     if let some hyp := hyp? then
       cands := cands ++ (← appAt rootExpr).elts.map fun _ ↦ (·.map (.appAt <|

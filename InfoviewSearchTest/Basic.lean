@@ -114,6 +114,12 @@ end AntiSymmRelTest
 
 -- TODO: test for over-applications
 example (f g : Nat → Nat) : (f + g) 2 = f 2 + g 2 := by
+  search_test "/0/1" => "rw [add_comm]\n  "
+  search_test "/0/1/0" => "rw [add_comm]\n  "
+  rw [add_comm]
+  search_test "/1" =>
+    "rw [Nat.add_comm]\n  "
+    "rw [add_comm (f 2) (g 2)]\n  "
   exact test_sorry
 
 /-

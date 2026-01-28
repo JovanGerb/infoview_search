@@ -59,8 +59,7 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation) (pasteInfo : PasteI
   token.refresh (render result)
   do
     let ppSubExpr ← Widget.ppExprTagged subExpr
-    let subExpr := { expr := subExpr, pos := pos }
-    let state ← initializeWidgetState rootExpr subExpr pasteInfo occ fvarId? parentDecl?
+    let state ← initializeWidgetState rootExpr subExpr pos pasteInfo occ fvarId? parentDecl?
     state.repeatRefresh ppSubExpr token'
 
 @[server_rpc_method]
