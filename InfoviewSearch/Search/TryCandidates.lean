@@ -24,7 +24,7 @@ local instance {α β cmp} [Append β] : Append (Std.TreeMap α β cmp) :=
 
 def getImportCandidates (rootExpr : Expr) (subExpr : SubExpr) (gpos : Array Grw.GRewritePos)
     (hyp? : Option Name) : MetaM (Array Candidates) := do
-  let mut cands : Std.TreeMap _ _ _ := {}
+  let mut cands : Std.TreeMap Nat (Array Candidates) := {}
   /- The order in which we show the suggestions for the same pattern for different tactics
   depends on the following insertion order.
   We choose the order `grw` => `rw` => `apply(at)`. -/
@@ -40,7 +40,7 @@ def getImportCandidates (rootExpr : Expr) (subExpr : SubExpr) (gpos : Array Grw.
 
 def getCandidates (rootExpr : Expr) (subExpr : SubExpr) (gpos : Array Grw.GRewritePos)
     (hyp? : Option Name) (pres : PreDiscrTrees) : MetaM (Array Candidates) := do
-  let mut cands : Std.TreeMap _ _ _ := {}
+  let mut cands : Std.TreeMap Nat (Array Candidates) := {}
   if !gpos.isEmpty then
     cands := cands ++
       (← getMatches pres.grw.toRefinedDiscrTree subExpr.expr).elts.map fun _ ↦ (·.map (.grw hyp?))
