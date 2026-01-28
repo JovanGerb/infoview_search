@@ -6,33 +6,13 @@ public import ProofWidgets.Data.Html
 public import Mathlib.Tactic.GRewrite
 public import Mathlib.Tactic.SimpRw
 public import Mathlib.Tactic.NthRewrite
-public meta import Mathlib.Lean.Meta.RefinedDiscrTree
 public import Batteries.Tactic.PermuteGoals
 
 public meta section
 
 namespace InfoviewSearch
 
-open Lean Meta Widget ProofWidgets Jsx Server
-
-initialize
-  registerTraceClass `infoview_search
-
-instance {α} : Append (RefinedDiscrTree.MatchResult α) where
-  append a b := ⟨a.elts.mergeWith (fun _ a b => a ++ b) b.elts⟩
-
-def _root_.Lean.Meta.RefinedDiscrTree.MatchResult.map {α β} (f : α → β)
-    (r : RefinedDiscrTree.MatchResult α) : RefinedDiscrTree.MatchResult β :=
-  ⟨r.elts.map fun _ a => a.map (·.map f)⟩
-
-/-- The kind of library lemma -/
-inductive PremiseKind where
-  /-- A local hypothesis -/
-  | hypothesis
-  /-- A lemma from the current file -/
-  | fromFile
-  /-- A lemma from an imported file -/
-  | fromImport
+open Lean Meta ProofWidgets Jsx Server
 
 inductive Premise where
   | const (declName : Name)
@@ -46,6 +26,10 @@ def toString : Premise → String
 
 def length (premise : Premise) : Nat :=
   premise.toString.length
+
+def getType : Premise → MetaM Expr
+  | .const name => (·.type) <$> getConstInfo name
+  | .fvar fvarId => fvarId.getType
 
 def forallMetaTelescopeReducing : Premise → MetaM (Expr × Array Expr × Array BinderInfo × Expr)
   | .const name => do
@@ -62,18 +46,14 @@ def unresolveName : Premise → MetaM Name
     unresolveNameGlobalAvoidingLocals name (fullNames := getPPFullNames (← getOptions))
   | .fvar fvarId => fvarId.getUserName
 
+def toMessageData : Premise → MessageData
+  | .const name => .ofConstName name
+  | .fvar fvarId => .ofExpr (.fvar fvarId)
+
+def toHtml (p : Premise) : MetaM Html :=
+  return <InteractiveMessage msg={← WithRpcRef.mk (← addMessageContextFull (p.toMessageData))} />
+
 end Premise
-
-/-- Pretty print the given constant, making sure not to print the `@` symbol.
-This is a HACK and there should be a more principled way to do this. -/
-def ppConstTagged (name : Name) : MetaM CodeWithInfos := do
-  return match ← ppExprTagged (← mkConstWithLevelParams name) with
-    | .tag tag _ => .tag tag (.text s!"{name}")
-    | code => code
-
-def ppPremiseTagged : Premise → MetaM CodeWithInfos
-  | .const name => ppConstTagged name
-  | .fvar fvarId => ppExprTagged (.fvar fvarId)
 
 /-- The information required for pasting a suggestion into the editor -/
 structure PasteInfo where
@@ -88,34 +68,7 @@ structure PasteInfo where
   /-- The preceding piece of syntax. This is used for merging consecutive `rw` tactics. -/
   stx : Syntax
 
-/-- Return syntax for the rewrite tactic `rw [e]`.
-When `occ` is `none`, this means that `kabstract` cannot find the expression
-due to bound variables, so in that case we fall back to `simp_rw`. -/
-def mkRewrite (occ : LOption Nat) (symm : Bool) (e : Term) (loc : Option Name)
-    (grw := false) : CoreM (TSyntax `tactic) := do
-  let loc := loc.map mkIdent
-  let rule ← if symm then `(Parser.Tactic.rwRule| ← $e) else `(Parser.Tactic.rwRule| $e:term)
-  match occ, grw with
-  | .some n, false => `(tactic| nth_rw $(Syntax.mkNatLit n):num [$rule] $[at $loc:term]?)
-  | .none, false => `(tactic| rw [$rule] $[at $loc:term]?)
-  | .undef, false => `(tactic| simp_rw [$rule] $[at $loc:term]?)
-  | .some n, true => `(tactic| nth_grw $(Syntax.mkNatLit n):num [$rule] $[at $loc:term]?)
-  -- We currently lack a variant of `grw` that rewrites bound variables, so we just use `grw`.
-  | _, true => `(tactic| grw [$rule] $[at $loc:term]?)
-
-/-- Get the `BinderInfo`s for the arguments of `mkAppN fn args`. -/
-def getBinderInfos (fn : Expr) (args : Array Expr) : MetaM (Array BinderInfo) := do
-  let mut fnType ← inferType fn
-  let mut result := Array.mkEmpty args.size
-  let mut j := 0
-  for i in [:args.size] do
-    unless fnType.isForall do
-      fnType ← whnfD (fnType.instantiateRevRange j i args)
-      j := i
-    let .forallE _ _ b bi := fnType | throwError m! "expected function type {indentExpr fnType}"
-    fnType := b
-    result := result.push bi
-  return result
+section Meta
 
 /-- Determine whether the explicit parts of two expressions are equal,
 and the implicit parts are definitionally equal. -/
@@ -132,6 +85,39 @@ partial def isExplicitEq (t s : Expr) : MetaM Bool := do
       isExplicitEq tArgs[i]! sArgs[i]!
     else
       withNewMCtxDepth <| isDefEq tArgs[i]! sArgs[i]!
+where
+  /-- Get the `BinderInfo`s for the arguments of `mkAppN fn args`. -/
+  getBinderInfos (fn : Expr) (args : Array Expr) : MetaM (Array BinderInfo) := do
+    let mut fnType ← inferType fn
+    let mut result := Array.mkEmpty args.size
+    let mut j := 0
+    for i in [:args.size] do
+      unless fnType.isForall do
+        fnType ← whnfD (fnType.instantiateRevRange j i args)
+        j := i
+      let .forallE _ _ b bi := fnType | throwError m! "expected function type {indentExpr fnType}"
+      fnType := b
+      result := result.push bi
+    return result
+
+end Meta
+
+section Syntax
+
+/-- Return syntax for the rewrite tactic `rw [e]`.
+When `occ` is `none`, this means that `kabstract` cannot find the expression
+due to bound variables, so in that case we fall back to `simp_rw`. -/
+def mkRewrite (occ : LOption Nat) (symm : Bool) (e : Term) (loc : Option Name)
+    (grw := false) : CoreM (TSyntax `tactic) := do
+  let loc := loc.map mkIdent
+  let rule ← if symm then `(Parser.Tactic.rwRule| ← $e) else `(Parser.Tactic.rwRule| $e:term)
+  match occ, grw with
+  | .some n, false => `(tactic| nth_rw $(Syntax.mkNatLit n):num [$rule] $[at $loc:term]?)
+  | .none, false => `(tactic| rw [$rule] $[at $loc:term]?)
+  | .undef, false => `(tactic| simp_rw [$rule] $[at $loc:term]?)
+  | .some n, true => `(tactic| nth_grw $(Syntax.mkNatLit n):num [$rule] $[at $loc:term]?)
+  -- We currently lack a variant of `grw` that rewrites bound variables, so we just use `grw`.
+  | _, true => `(tactic| grw [$rule] $[at $loc:term]?)
 
 def mergeTactics? {m} [Monad m] [MonadRef m] [MonadQuotation m] (stx₁ stx₂ : Syntax) :
     m (Option (TSyntax `tactic)) := do
@@ -162,7 +148,11 @@ def tacticPasteString (tac : TSyntax `tactic) (pasteInfo : PasteInfo) : CoreM St
   let indent := column
   return (← PrettyPrinter.ppTactic tac).pretty 100 indent column
 
-def mkSuggestionElement (tac : TSyntax `tactic) (pasteInfo : PasteInfo)
+end Syntax
+
+section Widget
+
+def mkSuggestion (tac : TSyntax `tactic) (pasteInfo : PasteInfo)
     (html : Html) (isText := false) : CoreM Html := do
   let singleTactic ← tacticPasteString tac pasteInfo
   let (tactic, replaceRange) ← (do
@@ -198,6 +188,8 @@ def mkListElement (htmls : Array Html) (header : Html) (startOpen := true) : Htm
     <summary className="mv2 pointer"> {header} </summary>
     {.element "ul" #[("style", json% { "padding-left" : "0", "list-style" : "none"})] htmls}
   </details>
+
+end Widget
 
 structure ExprWithPos where
   /-- The root Expression. -/

@@ -11,13 +11,16 @@ public import ProofWidgets.Component.FilterDetails
 meta section
 
 namespace InfoviewSearch
-open Lean Widget ProofWidgets Jsx
+open Lean Server Widget ProofWidgets Jsx
 
 inductive Candidates where
   | rw (hyp? : Option Name) (arr : Array Rw.RewriteLemma)
   | grw (hyp? : Option Name) (arr : Array Grw.GRewriteLemma)
   | app (arr : Array Apply.ApplyLemma)
   | appAt (hyp : Name) (arr : Array ApplyAt.ApplyAtLemma)
+
+local instance {α β cmp} [Append β] : Append (Std.TreeMap α β cmp) :=
+  ⟨.mergeWith (fun _ ↦ (· ++ ·))⟩
 
 def getImportCandidates (rootExpr : Expr) (subExpr : SubExpr) (gpos : Array Grw.GRewritePos)
     (hyp? : Option Name) : MetaM (Array Candidates) := do
@@ -26,35 +29,59 @@ def getImportCandidates (rootExpr : Expr) (subExpr : SubExpr) (gpos : Array Grw.
   depends on the following insertion order.
   We choose the order `grw` => `rw` => `apply(at)`. -/
   if !gpos.isEmpty then
-    cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
-      (← getImportMatches grwRef subExpr.expr).elts.map fun _ ↦ (·.map (.grw hyp?))
-  cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
-    (← getImportMatches rwRef subExpr.expr).elts.map fun _ ↦ (·.map (.rw hyp?))
+    cands := cands ++ (← getImportMatches grwRef subExpr.expr).elts.map fun _ ↦ (·.map (.grw hyp?))
+  cands := cands ++ (← getImportMatches rwRef subExpr.expr).elts.map fun _ ↦ (·.map (.rw hyp?))
   if subExpr.pos == .root then
     if let some hyp := hyp? then
-      cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
-        (← getImportMatches appAtRef rootExpr).elts.map fun _ ↦ (·.map (.appAt hyp))
+      cands := cands ++ (← getImportMatches appAtRef rootExpr).elts.map fun _ ↦ (·.map (.appAt hyp))
     else
-      cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
-        (← getImportMatches appRef rootExpr).elts.map fun _ ↦ (·.map .app)
+      cands := cands ++ (← getImportMatches appRef rootExpr).elts.map fun _ ↦ (·.map .app)
   return cands.foldr (init := #[]) fun _ val acc ↦ acc ++ val
 
 def getCandidates (rootExpr : Expr) (subExpr : SubExpr) (gpos : Array Grw.GRewritePos)
     (hyp? : Option Name) (pres : PreDiscrTrees) : MetaM (Array Candidates) := do
   let mut cands : Std.TreeMap _ _ _ := {}
   if !gpos.isEmpty then
-    cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
+    cands := cands ++
       (← getMatches pres.grw.toRefinedDiscrTree subExpr.expr).elts.map fun _ ↦ (·.map (.grw hyp?))
-  cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
+  cands := cands ++
     (← getMatches pres.rw.toRefinedDiscrTree subExpr.expr).elts.map fun _ ↦ (·.map (.rw hyp?))
   if subExpr.pos == .root then
     if let some hyp := hyp? then
-      cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
+      cands := cands ++
         (← getMatches pres.appAt.toRefinedDiscrTree rootExpr).elts.map fun _ ↦ (·.map (.appAt hyp))
     else
-      cands := cands.mergeWith (fun _ ↦ (· ++ ·)) <|
+      cands := cands ++
         (← getMatches pres.app.toRefinedDiscrTree rootExpr).elts.map fun _ ↦ (·.map .app)
   return cands.foldr (init := #[]) fun _ val acc ↦ acc ++ val
+
+/-- Spawn a task that computes a piece of `Html` to be displayed when finished. -/
+@[specialize]
+def spawnTask {α} (premise : Premise) (k : MetaM α) : MetaM <| Task (Except Html (Option α)) := do
+  let premiseHtml ← premise.toHtml
+  let act ← dropM do
+    /- Since this task may have been on the queue for a while,
+    the first thing we do is check if it has been cancelled already. -/
+    Core.checkInterrupted
+    /- Each thread counts its own number of heartbeats, so it is important
+    to use `withCurrHeartbeats` to avoid stray maxHeartbeats errors. -/
+    withCurrHeartbeats do
+      try
+        return .ok (some (← k))
+      catch ex =>
+        /- By default, we catch the errors from failed lemma applications
+        (appart from runtime exceptions, i.e. max heartbeats or max recursion depth,
+        which aren't caught by the `try`-`catch` block).
+        The `infoview_search.debug` option allows the user to still see all errors. -/
+        if infoview_search.debug.get (← getOptions) then
+          throw ex
+        return .ok none
+  BaseIO.asTask <| act.catchExceptions fun e =>
+    return .error <li>
+        {premiseHtml} failed:
+        <br/>
+        <InteractiveMessage msg={← WithRpcRef.mk e.toMessageData} />
+      </li>
 
 public inductive SectionsState where
   | rw (s : SectionState Rw.ResultId)
@@ -70,22 +97,19 @@ def SectionsState.hasProgressed : SectionsState → BaseIO Bool
 
 private def Candidates.generateSuggestions (rootExpr : Expr) (subExpr : SubExpr)
     (pasteInfo : PasteInfo) (occ : LOption Nat)
-    (kind : PremiseKind) (gpos : Array Grw.GRewritePos) :
-    Candidates → MetaM SectionsState
+    (source : Source) (gpos : Array Grw.GRewritePos) : Candidates → MetaM SectionsState
   | .rw hyp? arr => do
-    let arr ← arr.mapM (Rw.generateSuggestion rootExpr subExpr pasteInfo hyp? occ)
-    return .rw { kind, results := #[], pending := arr }
+    .rw <$> .new source <$> arr.mapM fun lem ↦
+      spawnTask lem.name <| Rw.generateSuggestion rootExpr subExpr pasteInfo hyp? occ lem
   | .grw hyp? arr => do
-    if gpos.isEmpty then
-      return .grw { kind, results := #[], pending := #[]}
-    let arr ← arr.mapM (Grw.generateSuggestion rootExpr subExpr pasteInfo gpos hyp? occ)
-    return .grw { kind, results := #[], pending := arr }
+    .grw <$> .new source <$> arr.mapM fun lem ↦
+      spawnTask lem.name <| Grw.generateSuggestion rootExpr subExpr pasteInfo gpos hyp? occ lem
   | app arr => do
-    let arr ← arr.mapM (Apply.generateSuggestion rootExpr pasteInfo)
-    return .app { kind, results := #[], pending := arr }
+    .app <$> .new source <$> arr.mapM fun lem ↦
+      spawnTask lem.name <| Apply.generateSuggestion rootExpr pasteInfo lem
   | appAt hyp arr => do
-    let arr ← arr.mapM (ApplyAt.generateSuggestion rootExpr pasteInfo hyp)
-    return .appAt { kind, results := #[], pending := arr }
+    .appAt <$> .new source <$> arr.mapM fun lem ↦
+      spawnTask lem.name <| ApplyAt.generateSuggestion rootExpr pasteInfo hyp lem
 
 /-- While the suggestions are computed, `WidgetState` is used to keep track of the progress.
 Initially, it contains a bunch of unfinished `Task`s, and with each round of `updateWidgetState`,
@@ -96,8 +120,6 @@ public structure WidgetState where
   /-- The sections corresponding to imported theorems. These are in a separate task, because
   they may take a long time to evaluate. Once evaluated, these are appended to `sections`. -/
   importTask? : Option (Task (Except Exception <| Array SectionsState))
-  /-- The errors that appeared in evaluating . -/
-  exceptions : Array Html
   /-- The HTML shown at the drop-down above the suggestions. -/
   header : Html
 
@@ -134,10 +156,8 @@ public def initializeWidgetState (rootExpr : Expr) (subExpr : SubExpr) (pasteInf
     (← getImportCandidates rootExpr subExpr gpos hyp?).mapM
       (·.generateSuggestions rootExpr subExpr pasteInfo occ .fromImport gpos)
 
-  return {
-    sections, importTask?, exceptions := #[]
-    header :=
-      <span> Lemma suggestions for <InteractiveCode fmt={← ppExprTagged subExpr.expr}/>: </span> }
+  return { sections, importTask?, header :=
+    <span> Lemma suggestions for <InteractiveCode fmt={← ppExprTagged subExpr.expr}/>: </span> }
 
 /-- If `state.importTask?` has been evaluated, append the result to `section`. -/
 def updateImportTask (state : WidgetState) : EIO Exception WidgetState := do
@@ -150,27 +170,12 @@ def updateImportTask (state : WidgetState) : EIO Exception WidgetState := do
 /-- Look at all of the pending `Task`s and if any of them gave a result, add this to the state. -/
 def updateWidgetState (state : WidgetState) : MetaM WidgetState := do
   let state ← updateImportTask state
-  let mut sections := #[]
-  let mut exceptions := state.exceptions
-  for s in state.sections do
-    match s with
-    | .rw s =>
-      let (exs, s) ← s.update (·.isDuplicate ·)
-      sections := sections.push <| .rw s
-      exceptions := exceptions ++ exs
-    | .grw s =>
-      let (exs, s) ← s.update (·.isDuplicate ·)
-      sections := sections.push <| .grw s
-      exceptions := exceptions ++ exs
-    | .app s =>
-      let (exs, s) ← s.update (·.isDuplicate ·)
-      sections := sections.push <| .app s
-      exceptions := exceptions ++ exs
-    | .appAt s =>
-      let (exs, s) ← s.update (·.isDuplicate ·)
-      sections := sections.push <| .appAt s
-      exceptions := exceptions ++ exs
-  return { state with sections, exceptions }
+  let sections ← state.sections.mapM fun
+    | .rw s => .rw <$> s.update (·.isDuplicate ·)
+    | .grw s => .grw <$> s.update (·.isDuplicate ·)
+    | .app s => .app <$> s.update (·.isDuplicate ·)
+    | .appAt s => .appAt <$> s.update (·.isDuplicate ·)
+  return { state with sections }
 
 public def WidgetState.render (state : WidgetState)
     (ppSubExpr : CodeWithInfos) : Html :=
@@ -190,23 +195,10 @@ where
       | .appAt s => s.render filter "apply at"
     let htmls := if state.importTask?.isNone then htmls else
       htmls.push <| .text "Imported theorems are being loaded..."
-    let htmls := match renderExceptions state.exceptions with
-      | some html => htmls.push html
-      | none => htmls
     if htmls.isEmpty then
       <p> No lemma suggestions found for <InteractiveCode fmt={ppSubExpr}/> </p>
     else
       .element "div" #[("style", json% {"marginLeft" : "4px"})] htmls
-  /-- Render the error messages -/
-  renderExceptions (exceptions : Array Html) : Option Html := do
-    if exceptions.isEmpty then none else
-    some <|
-      <details «open»={true}>
-        <summary className="mv2 pointer">
-          <span «class»="error"> Error messages: </span>
-        </summary>
-        {Html.element "ul" #[("style", json% { "padding-left" : "30px"})] exceptions}
-      </details>
 
 /-- Repeatedly run `updateWidgetState` until there is an update, and then return the result. -/
 public partial def WidgetState.repeatRefresh (state : WidgetState)

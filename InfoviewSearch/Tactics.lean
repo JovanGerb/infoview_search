@@ -52,7 +52,7 @@ def renderIntro (loc : SubExpr.GoalsLocation) (pasteInfo : PasteInfo) : MetaM (O
       names := names.push name
       lctx := lctx.setUserName x.fvarId! name
     let tactic ← `(tactic| intro $[$(names.map mkIdent)]*)
-    mkSuggestionElement (isText := true) tactic pasteInfo <| .text text
+    mkSuggestion (isText := true) tactic pasteInfo <| .text text
 
 def renderRfl (loc : SubExpr.GoalsLocation) (pasteInfo : PasteInfo) : MetaM (Option Html) := do
   let .target pos := loc.loc | return none
@@ -60,7 +60,7 @@ def renderRfl (loc : SubExpr.GoalsLocation) (pasteInfo : PasteInfo) : MetaM (Opt
   let_expr Eq _ lhs rhs := ← instantiateMVars (← loc.mvarId.getType) | return none
   unless ← isDefEq lhs rhs do return none
   let tactic ← `(tactic| rfl)
-  liftM <| mkSuggestionElement (isText := true) tactic pasteInfo <| .text "reflexivity"
+  liftM <| mkSuggestion (isText := true) tactic pasteInfo <| .text "reflexivity"
 
 def renderInduction (loc : SubExpr.GoalLocation) (pasteInfo : PasteInfo) : MetaM (Option Html) := do
   let .hyp fvarId := loc | return none
@@ -73,7 +73,7 @@ def renderInduction (loc : SubExpr.GoalLocation) (pasteInfo : PasteInfo) : MetaM
     if (← getEnv).contains (typeHead.str "induction") then
       usingClause := some (mkIdent (typeHead.str "induction"))
   let tactic ← `(tactic| induction $(mkIdent name):ident $[using $usingClause]?)
-  mkSuggestionElement (isText := true) ⟨tactic.1⟩ pasteInfo <| .text s!"induction on {name}"
+  mkSuggestion (isText := true) ⟨tactic.1⟩ pasteInfo <| .text s!"induction on {name}"
 
 def renderTactic (loc : SubExpr.GoalsLocation) (pasteInfo : PasteInfo) : MetaM (Option Html) := do
   let mut tactics := #[]

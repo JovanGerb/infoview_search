@@ -11,8 +11,6 @@ open Lean Meta Widget Server ProofWidgets Jsx
 structure ApplyAtLemma where
   name : Premise
 
-/-! ### Checking apply lemmas -/
-
 structure ResultId where
   numGoals : Nat
   nameLenght : Nat
@@ -35,17 +33,14 @@ structure Application extends ApplyAtLemma where
   hyp : Name
 
 set_option linter.style.emptyLine false in
-/-- If `thm` can be used to apply to `e`, return the applications. -/
-def checkApplication (lem : ApplyAtLemma) (e : Expr) (hyp : Name) : MetaM (Option Application) := do
+/-- If `thm` can be used to apply to `target`, return the applications. -/
+def checkApplication (lem : ApplyAtLemma) (target : Expr) (hyp : Name) :
+    MetaM Application := do
   let (proof, mvars, binderInfos, replacement) ← lem.name.forallMetaTelescopeReducing
-  withTraceNodeBefore `infoview_search (return m!"applying {← lem.name.unresolveName} to {e}") do
   let assume ← inferType mvars.back!
   let mvars := mvars.pop
-  let unifies ← withTraceNodeBefore `infoview_search (return m! "unifying {assume} =?= {e}")
-    (withReducible (isDefEq assume e))
-  unless unifies do return none
-  try synthAppInstances `infoview_search default mvars binderInfos false false
-  catch _ => return none
+  unless ← isDefEq assume target do throwError "{assume} does not unify with {target}"
+  synthAppInstances `infoview_search default mvars binderInfos false false
   let mut newGoals := #[]
   for mvar in mvars, bi in binderInfos do
     unless ← mvar.mvarId!.isAssigned do
@@ -66,7 +61,7 @@ def checkApplication (lem : ApplyAtLemma) (e : Expr) (hyp : Name) : MetaM (Optio
     name := lem.name.toString
     newGoals := ← newGoals.mapM fun g => do abstractMVars (← g.1.getType)
   }
-  return some { lem with proof, replacement, newGoals, makesNewMVars, info, hyp }
+  return { lem with proof, replacement, newGoals, makesNewMVars, info, hyp }
 
 instance : Ord ResultId where
   compare a b :=
@@ -99,56 +94,26 @@ def Application.toResult (app : Application) (pasteInfo : PasteInfo) :
     -- which we would still want to show as a new goal?
     if bi.isExplicit then
       newGoals := newGoals.push (← ppExprTagged (← mvarId.getType))
-  let prettyLemma ← ppPremiseTagged app.name
+  let mut htmls := #[<InteractiveCode fmt={replacement}/>]
+  for newGoal in newGoals do
+    htmls := htmls.push
+      <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={newGoal}/> </div>
+  let filtered ←
+    if !app.makesNewMVars then
+      some <$> mkSuggestion tactic pasteInfo (.element "div" #[] htmls)
+    else
+      pure none
+  htmls := htmls.push (← app.name.toHtml)
+  let unfiltered ← mkSuggestion tactic pasteInfo (.element "div" #[] htmls)
+  let pattern ← forallTelescopeReducing (← app.name.getType) fun xs _ => do
+    ppExprTagged (← inferType xs.back!)
+  return { filtered, unfiltered, info := app.info, pattern }
 
-  let html (showNames : Bool) :=
-    mkSuggestionElement tactic pasteInfo <|
-      let newGoals := newGoals.map
-        (<div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={·}/> </div>)
-      .element "div" #[] <|
-        #[<InteractiveCode fmt={replacement}/>] ++ newGoals ++
-          if showNames then #[<div> <InteractiveCode fmt={prettyLemma}/> </div>] else #[]
-  let lemmaType ← match app.name with
-    | .const name => (·.type) <$> getConstInfo name
-    | .fvar fvarId => inferType (.fvar fvarId)
-  return {
-    filtered := ← if !app.makesNewMVars then (some <$> html false) else pure none
-    unfiltered := ← html true
-    info := app.info
-    pattern := ← forallTelescopeReducing lemmaType fun xs _ => do
-      ppExprTagged (← inferType <| xs.back!)
-  }
-
-/-- `generateSuggestion` is called in parallel for all apply lemmas.
-- If the lemma succeeds, return a `Result AppAtInfo`.
-- If the lemma fails, return `none`
-- If the attempt throws an error, return the error as `Html`.
-
-Note: we use two `try`-`catch` clauses, because we rely on `ppConstTagged`
-in the first `catch` branch, which could (in principle) throw an error again.
--/
+/-- `generateSuggestion` is called in parallel for all apply lemmas. -/
 def generateSuggestion (expr : Expr) (pasteInfo : PasteInfo) (hyp : Name) (lem : ApplyAtLemma) :
-    MetaM <| Task (Except Html <| Option (Result ResultId)) := do
-  BaseIO.asTask <| EIO.catchExceptions (← dropM do withCurrHeartbeats do
-    have : MonadExceptOf _ MetaM := MonadAlwaysExcept.except
-    try .ok <$> withNewMCtxDepth do
-      Core.checkSystem "infoview_search"
-      let some app ← checkApplication lem expr hyp | return none
-      some <$> app.toResult pasteInfo
-    catch e => withCurrHeartbeats do
-      return .error
-        <li>
-          An error occurred when processing apply lemma
-          <InteractiveCode fmt={← ppPremiseTagged lem.name}/>:
-          <br/>
-          <InteractiveMessage msg={← WithRpcRef.mk e.toMessageData} />
-        </li>)
-    fun e =>
-      return .error
-        <li>
-          An error occurred when pretty printing apply lemma {.text lem.1.toString}:
-          <br/>
-          <InteractiveMessage msg={← WithRpcRef.mk e.toMessageData} />
-        </li>
+    MetaM (Result ResultId) :=
+  withReducible do withNewMCtxDepth do
+  let app ← checkApplication lem expr hyp
+  app.toResult pasteInfo
 
 end InfoviewSearch.ApplyAt

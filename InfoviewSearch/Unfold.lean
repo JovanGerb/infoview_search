@@ -140,7 +140,7 @@ def renderUnfolds (e : Expr) (occ : LOption Nat) (hyp? : Option Name) (pasteInfo
     return none
   let htmls ← results.mapM fun unfold => do
     let tactic ← tacticSyntax e unfold occ hyp?
-    mkSuggestionElement tactic pasteInfo <InteractiveCode fmt={← ppExprTagged unfold}/>
+    mkSuggestion tactic pasteInfo <InteractiveCode fmt={← ppExprTagged unfold}/>
   return mkListElement (startOpen := false) htmls <| .text "unfold"
 
 end InfoviewSearch.InteractiveUnfold

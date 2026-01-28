@@ -17,6 +17,7 @@ set_option linter.privateModule false
 open scoped InfoviewSearch.Test
 
 #infoview_search
+set_option infoview_search.debug true
 
 axiom test_sorry {α : Sort*} : α
 
@@ -55,7 +56,7 @@ example (h : m ≡ k [MOD n]) (h' : m ≡ k + 1 [MOD n]) (h'' : m = k + 1) : m �
 
 example {p q r : Prop} (h₁ : p → q → r) (h₂ : p → q) (h₃ : p) : r := by
   search_test h₃ "" => "apply h₂ at h₃\n  "
-  -- TODO: make this work:
+  -- TODO: support `apply_rw`:
   -- search_test h₁ "/1/0" => "apply_rw [← h₂]\n  "
   exact test_sorry
 
@@ -121,7 +122,7 @@ TODO: add tests for
 TODO:
 
 - use `rw!` instead of `rw` when motive is not type correct
-- use `simp_rw` instead of `rw` when head constant doesn't match.
 - improve `nth_rw` heuristic & add a test
+- The filterdetails should each be focused in the relevant section
 
 -/

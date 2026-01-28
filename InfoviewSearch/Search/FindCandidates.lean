@@ -5,6 +5,7 @@ public import InfoviewSearch.Search.GRewrite
 public import InfoviewSearch.Search.Apply
 public import InfoviewSearch.Search.ApplyAt
 public meta import InfoviewSearch.Search.FoldEnv
+public meta import Mathlib.Lean.Meta.RefinedDiscrTree
 
 /-!
 # Discrimination tree lookup

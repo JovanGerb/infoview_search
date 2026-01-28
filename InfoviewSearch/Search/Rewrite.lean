@@ -55,8 +55,6 @@ Ways to extend `rw!?`:
 
 -/
 
-/-! ### Caching -/
-
 public meta section
 
 namespace InfoviewSearch.Rw
@@ -69,8 +67,6 @@ structure RewriteLemma where
   name : Premise
   /-- `symm` is `true` when rewriting from right to left -/
   symm : Bool
-
-/-! ### Checking rewrite lemmas -/
 
 structure ResultId where
   numGoals : Nat
@@ -104,25 +100,20 @@ structure Rewrite extends RewriteLemma where
 set_option linter.style.emptyLine false in
 /-- If `thm` can be used to rewrite `e`, return the rewrite. -/
 def checkRewrite (lem : RewriteLemma) (rootExpr : Expr) (subExpr : SubExpr)
-    (hyp? : Option Name) (occ : LOption Nat) : MetaM (Option Rewrite) := do
+    (hyp? : Option Name) (occ : LOption Nat) : MetaM Rewrite := do
   let e := subExpr.expr
   let (proof, mvars, binderInfos, eqn) ← lem.name.forallMetaTelescopeReducing
-  withTraceNodeBefore `infoview_search (return m!
-    "rewriting {e} by {if lem.symm then "← " else ""}{← lem.name.unresolveName}") do
-  let mkApp2 _ lhs rhs ← whnf eqn | return none
+  let mkApp2 _ lhs rhs ← whnf eqn | throwError "Exected an equality or iff, not {eqn}"
   let (lhs, rhs) := if lem.symm then (rhs, lhs) else (lhs, rhs)
   let lhsOrig := lhs; let mctxOrig ← getMCtx
-  let unifies ← withTraceNodeBefore `infoview_search (return m! "unifying {e} =?= {lhs}")
-    (withReducible (isDefEq e lhs))
-  unless unifies do return none
+  unless ← isDefEq lhs e do throwError "{lhs} does not unify with {e}"
   -- just like in `kabstract`, we compare the `HeadIndex` and number of arguments
   let lhs ← instantiateMVars lhs
   -- TODO: if the `headIndex` doesn't match, then use `simp_rw` instead of `rw` in the suggestion,
   -- instead of just not showing the suggestion.
   if lhs.toHeadIndex != e.toHeadIndex || lhs.headNumArgs != e.headNumArgs then
-    return none
-  try synthAppInstances `infoview_search default mvars binderInfos false false
-  catch _ => return none
+    throwError "{lhs} and {e} do not match according to the head-constant indexing"
+  synthAppInstances `infoview_search default mvars binderInfos false false
   let mut extraGoals := #[]
   let mut justLemmaName := true
   let mut occ := occ
@@ -154,7 +145,7 @@ def checkRewrite (lem : RewriteLemma) (rootExpr : Expr) (subExpr : SubExpr)
     name := lem.name.toString
     replacement := ← abstractMVars replacement
   }
-  return some { lem with
+  return { lem with
     proof, replacement, extraGoals, makesNewMVars, isRefl, info, justLemmaName, occ, hyp? }
 
 instance : Ord ResultId where
@@ -190,62 +181,28 @@ def Rewrite.toResult (rw : Rewrite) (pasteInfo : PasteInfo) : MetaM (Result Resu
     -- which we would still want to show as a new goal?
     if bi.isExplicit then
       extraGoals := extraGoals.push (← ppExprTagged (← mvarId.getType))
-  let prettyLemma ← ppPremiseTagged rw.name
-  let html (showNames : Bool) :=
-    mkSuggestionElement tactic pasteInfo <|
-    let extraGoals := extraGoals.flatMap fun extraGoal =>
-      #[<div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={extraGoal}/> </div>];
-    .element "div" #[] <|
-      #[<InteractiveCode fmt={replacementString}/>] ++ extraGoals ++
-        if showNames then #[<div> <InteractiveCode fmt={prettyLemma}/> </div>] else #[]
-  let lemmaType ← match rw.name with
-    | .const name => (·.type) <$> getConstInfo name
-    | .fvar fvarId => inferType (.fvar fvarId)
-  return {
-    filtered := ← if !rw.isRefl && !rw.makesNewMVars then (some <$> html false) else pure none
-    unfiltered := ← html true
-    info := rw.info
-    pattern := ← pattern lemmaType
-  }
-where
-  /-- Render the matching side of the rewrite lemma.
-  This is shown at the header of each section of rewrite results. -/
-  pattern (type : Expr) : MetaM CodeWithInfos := do
-    forallTelescopeReducing type fun _ e => do
-      let mkApp2 _ lhs rhs ← whnf e | throwError "Expected equation, not {indentExpr e}"
-      ppExprTagged <| if rw.symm then rhs else lhs
+  let mut htmls := #[<InteractiveCode fmt={replacementString}/>]
+  for extraGoal in extraGoals do
+    htmls := htmls.push
+      <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={extraGoal}/> </div>
+  let filtered ←
+    if !rw.isRefl && !rw.makesNewMVars then
+      some <$> mkSuggestion tactic pasteInfo (.element "div" #[] htmls)
+    else
+      pure none
+  htmls := htmls.push (← rw.name.toHtml)
+  let unfiltered ← mkSuggestion tactic pasteInfo (.element "div" #[] htmls)
+  let pattern ← forallTelescopeReducing (← rw.name.getType) fun _ e => do
+    let mkApp2 _ lhs rhs ← whnf e | throwError "Expected equation, not{indentExpr e}"
+    ppExprTagged <| if rw.symm then rhs else lhs
+  return { filtered, unfiltered, info := rw.info, pattern }
 
-/-- `generateSuggestion` is called in parallel for all rewrite lemmas.
-- If the lemma succeeds, return a `Result RwInfo`.
-- If the lemma fails, return `none`
-- If the attempt throws an error, return the error as `Html`.
-
-Note: we use two `try`-`catch` clauses, because we rely on `ppConstTagged`
-in the first `catch` branch, which could (in principle) throw an error again.
--/
+/-- `generateSuggestion` is called in parallel for all rewrite lemmas. -/
 def generateSuggestion (rootExpr : Expr) (subExpr : SubExpr) (pasteInfo : PasteInfo)
     (hyp? : Option Name) (occ : LOption Nat) (lem : RewriteLemma) :
-    MetaM <| Task (Except Html <| Option (Result ResultId)) := do
-  BaseIO.asTask <| EIO.catchExceptions (← dropM do withCurrHeartbeats do
-    have : MonadExceptOf _ MetaM := MonadAlwaysExcept.except
-    try .ok <$> withNewMCtxDepth do
-      Core.checkSystem "infoview_search"
-      let some rewrite ← checkRewrite lem rootExpr subExpr hyp? occ | return none
-      some <$> rewrite.toResult pasteInfo
-    catch e => withCurrHeartbeats do
-      return .error
-        <li>
-          An error occurred when processing rewrite lemma
-          <InteractiveCode fmt={← ppPremiseTagged lem.name}/>:
-          <br/>
-          <InteractiveMessage msg={← WithRpcRef.mk e.toMessageData} />
-        </li>)
-    fun e =>
-      return .error
-        <li>
-          An error occurred when pretty printing rewrite lemma {.text lem.1.toString}:
-          <br/>
-          <InteractiveMessage msg={← WithRpcRef.mk e.toMessageData} />
-        </li>
+    MetaM (Result ResultId) := do
+  withReducible do withNewMCtxDepth do
+  let rewrite ← checkRewrite lem rootExpr subExpr hyp? occ
+  rewrite.toResult pasteInfo
 
 end InfoviewSearch.Rw

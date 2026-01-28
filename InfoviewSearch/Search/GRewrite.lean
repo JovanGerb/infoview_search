@@ -12,8 +12,6 @@ public meta section
 
 namespace InfoviewSearch.Grw
 
-/-! ### Caching -/
-
 open Lean Meta Mathlib.Tactic
 
 /-- `GRewritePos` contains the ìnformation about a given subexpression position needed for
@@ -26,8 +24,6 @@ structure GRewritePos where
   /-- `symm` is `none` if the given relations are symmetric.
   `symm` is `true` when you can only rewrite from right to left. -/
   symm? : Option Bool
-
-/-! ### Checking rewrite lemmas -/
 
 /-- Given the relation that we can use to rewrite at the give position, figure out all of the
 subrelations that could be used instead. -/
@@ -162,30 +158,24 @@ structure GRewrite extends GRewriteLemma where
 set_option linter.style.emptyLine false in
 /-- If `thm` can be used to rewrite `e`, return the rewrite. -/
 def checkGRewrite (lem : GRewriteLemma) (rootExpr : Expr) (subExpr : SubExpr)
-    (pos : Array GRewritePos) (hyp? : Option Name) (occ : LOption Nat) : MetaM (Option GRewrite) :=
-  withReducible do
+    (pos : Array GRewritePos) (hyp? : Option Name) (occ : LOption Nat) : MetaM GRewrite := do
   let mctx ← getMCtx
-  Option.join <$> pos.findSomeM? fun pos ↦ do
+  (·.getDM do throwError "no suitable `grw` relation was found") =<< pos.findSomeM? fun pos ↦ do
   unless lem.relName == pos.relName && pos.symm?.all (· == lem.symm) do return none
   let (proof, mvars, binderInfos, rel) ← lem.name.forallMetaTelescopeReducing
   let mkApp2 rel lhs rhs := rel.cleanupAnnotations | return none
-  unless ← isDefEq rel pos.relation do
-    setMCtx mctx; return none
+  unless ← isDefEq rel pos.relation do setMCtx mctx; return none
   some <$> do
   let e := subExpr.expr
-  withTraceNodeBefore `infoview_search (return m!
-    "grewriting {e} by {if lem.symm then "← " else ""}{← lem.name.unresolveName}") do
   let (lhs, rhs) := if lem.symm then (rhs, lhs) else (lhs, rhs)
   let lhsOrig := lhs; let mctxOrig ← getMCtx
-  let unifies ← withTraceNodeBefore `infoview_search (return m! "unifying {e} =?= {lhs}")
-    (isDefEq e lhs)
-  unless unifies do return none
+  unless ← isDefEq e lhs do
+    throwError "{lhs} does not unify with {e}"
   -- just like in `kabstract`, we compare the `HeadIndex` and number of arguments
   let lhs ← instantiateMVars lhs
   if lhs.toHeadIndex != e.toHeadIndex || lhs.headNumArgs != e.headNumArgs then
-    return none
-  try synthAppInstances `infoview_search default mvars binderInfos false false
-  catch _ => return none
+    throwError "{lhs} and {e} do not match according to the head-constant indexing"
+  synthAppInstances `infoview_search default mvars binderInfos false false
   let mut extraGoals := #[]
   for mvar in mvars, bi in binderInfos do
     unless ← mvar.mvarId!.isAssigned do
@@ -209,7 +199,7 @@ def checkGRewrite (lem : GRewriteLemma) (rootExpr : Expr) (subExpr : SubExpr)
     name := lem.name.toString
     replacement := ← abstractMVars replacement
   }
-  return some { lem with
+  return { lem with
     proof, replacement, extraGoals, makesNewMVars, isRefl, info, justLemmaName, hyp?, occ }
 
 instance : Ord ResultId where
@@ -244,63 +234,29 @@ def GRewrite.toResult (grw : GRewrite) (pasteInfo : PasteInfo) : MetaM (Result R
     -- which we would still want to show as a new goal?
     if bi.isExplicit then
       extraGoals := extraGoals.push (← ppExprTagged (← mvarId.getType))
-  let prettyLemma ← ppPremiseTagged grw.name
-  let html (showNames : Bool) :=
-    mkSuggestionElement tactic pasteInfo <|
-    let extraGoals := extraGoals.flatMap fun extraGoal =>
-      #[<div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={extraGoal}/> </div>];
-    .element "div" #[] <|
-      #[<InteractiveCode fmt={replacement}/>] ++ extraGoals ++
-        if showNames then #[<div> <InteractiveCode fmt={prettyLemma}/> </div>] else #[]
-  let lemmaType ← match grw.name with
-    | .const name => (·.type) <$> getConstInfo name
-    | .fvar fvarId => inferType (.fvar fvarId)
-  return {
-    filtered := ← if !grw.isRefl && !grw.makesNewMVars then (some <$> html false) else pure none
-    unfiltered := ← html true
-    info := grw.info
-    pattern := ← pattern lemmaType
-  }
-where
-  /-- Render the matching side of the rewrite lemma.
-  This is shown at the header of each section of rewrite results. -/
-  pattern (type : Expr) : MetaM CodeWithInfos := withReducible do
-    forallTelescopeReducing type fun _ e => do
-      let mkApp2 _ lhs rhs := (← instantiateMVars e).cleanupAnnotations
-        | throwError "Expected relation, not {indentExpr e}"
-      ppExprTagged <| if grw.symm then rhs else lhs
+  let mut htmls := #[<div> <InteractiveCode fmt={replacement}/> </div>]
+  for extraGoal in extraGoals do
+    htmls := htmls.push
+      <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={extraGoal}/> </div>
+  let filtered ←
+    if !grw.isRefl && !grw.makesNewMVars then
+      some <$> mkSuggestion tactic pasteInfo (.element "div" #[] htmls)
+    else
+      pure none
+  htmls := htmls.push (← grw.name.toHtml)
+  let unfiltered ← mkSuggestion tactic pasteInfo (.element "div" #[] htmls)
+  let pattern ← forallTelescopeReducing (← grw.name.getType) fun _ e => do
+    let mkApp2 _ lhs rhs := (← instantiateMVars e).cleanupAnnotations
+      | throwError "Expected relation, not {indentExpr e}"
+    ppExprTagged <| if grw.symm then rhs else lhs
+  return { filtered, unfiltered, info := grw.info, pattern }
 
-/-- `generateSuggestion` is called in parallel for all rewrite lemmas.
-- If the lemma succeeds, return a `Result GrwInfo`.
-- If the lemma fails, return `none`
-- If the attempt throws an error, return the error as `Html`.
-
-Note: we use two `try`-`catch` clauses, because we rely on `ppConstTagged`
-in the first `catch` branch, which could (in principle) throw an error again.
--/
+/-- `generateSuggestion` is called in parallel for all rewrite lemmas. -/
 def generateSuggestion (rootExpr : Expr) (subExpr : SubExpr) (pasteInfo : PasteInfo)
     (gpos : Array GRewritePos) (hyp? : Option Name) (occ : LOption Nat) (lem : GRewriteLemma) :
-    MetaM <| Task (Except Html <| Option (Result ResultId)) := do
-  BaseIO.asTask <| EIO.catchExceptions (← dropM do withCurrHeartbeats do
-    have : MonadExceptOf _ MetaM := MonadAlwaysExcept.except
-    try .ok <$> withNewMCtxDepth do
-      Core.checkSystem "infoview_search"
-      let some rewrite ← checkGRewrite lem rootExpr subExpr gpos hyp? occ | return none
-      some <$> rewrite.toResult pasteInfo
-    catch e => withCurrHeartbeats do
-      return .error
-        <li>
-          An error occurred when processing generalized rewrite lemma
-          <InteractiveCode fmt={← ppPremiseTagged lem.name}/>:
-          <br/>
-          <InteractiveMessage msg={← WithRpcRef.mk e.toMessageData} />
-        </li>)
-    fun e =>
-      return .error
-        <li>
-          An error occurred when pretty printing generalized rewrite lemma {.text lem.1.toString}:
-          <br/>
-          <InteractiveMessage msg={← WithRpcRef.mk e.toMessageData} />
-        </li>
+    MetaM (Result ResultId) := do
+  withReducible do withNewMCtxDepth do
+  let rewrite ← checkGRewrite lem rootExpr subExpr gpos hyp? occ
+  rewrite.toResult pasteInfo
 
 end InfoviewSearch.Grw
