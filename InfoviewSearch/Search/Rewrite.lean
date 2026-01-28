@@ -55,20 +55,20 @@ Ways to extend `rw!?`:
 
 -/
 
-meta section
+public meta section
 
 namespace InfoviewSearch
 
-open Lean Meta
+open Lean Meta Widget ProofWidgets Jsx Server
 
 /-- The structure for rewrite lemmas stored in the `RefinedDiscrTree`. -/
-public structure RwLemma where
+structure RwLemma where
   /-- The lemma -/
   name : Premise
   /-- `symm` is `true` when rewriting from right to left -/
   symm : Bool
 
-public structure RwInfo where
+structure RwInfo where
   pasteInfo : PasteInfo
   rootExpr : Expr
   subExpr : Expr
@@ -76,7 +76,7 @@ public structure RwInfo where
   hyp? : Option Name
   rwKind : RwKind
 
-public structure RwKey where
+structure RwKey where
   numGoals : Nat
   symm : Bool
   nameLenght : Nat
@@ -88,26 +88,31 @@ public structure RwKey where
   replacement : AbstractMVarsResult
 deriving Inhabited
 
-/-- A rewrite lemma that has been applied to an expression. -/
-structure Rewrite extends RwLemma where
-  /-- The proof of the rewrite -/
-  proof : Expr
-  /-- The replacement expression obtained from the rewrite -/
-  replacement : Expr
-  /-- The extra goals created by the rewrite -/
-  extraGoals : Array (MVarId × BinderInfo)
-  /-- Whether the rewrite introduces a new metavariable in the replacement expression -/
-  makesNewMVars : Bool
-  /-- Whether the rewrite is reflexive -/
-  isRefl : Bool
-  key : RwKey
-  justLemmaName : Bool
-  hyp? : Option Name
-  rwKind : RwKind
+instance : Ord RwKey where
+  compare a b :=
+    (compare a.1 b.1).then <|
+    (compare a.2 b.2).then <|
+    (compare a.3 b.3).then <|
+    (compare a.4 b.4).then <|
+    (compare a.5 b.5)
+
+def RwKey.isDuplicate (a b : RwKey) : MetaM Bool :=
+  pure (a.replacement.mvars.size == b.replacement.mvars.size)
+    <&&> isExplicitEq a.replacement.expr b.replacement.expr
+
+/-- Return the rewrite tactic that performs the rewrite. -/
+private def tacticSyntax (lem : RwLemma) (rwKind : RwKind) (hyp? : Option Name) (proof : Expr)
+    (justLemmaName : Bool) : MetaM (TSyntax `tactic) := do
+  let proof ← if justLemmaName then
+      `(term| $(mkIdent <| ← lem.name.unresolveName))
+    else
+      withOptions (pp.mvars.set · false) (PrettyPrinter.delab proof)
+  mkRewrite rwKind lem.symm proof hyp?
 
 set_option linter.style.emptyLine false in
-/-- If `thm` can be used to rewrite `e`, return the rewrite. -/
-def checkRewrite (lem : RwLemma) (i : RwInfo) : MetaM Rewrite := do
+
+def RwLemma.generateSuggestion (i : RwInfo) (lem : RwLemma) : MetaM (Result RwKey) :=
+  withReducible do withNewMCtxDepth do
   let e := i.subExpr
   let (proof, mvars, binderInfos, eqn) ← lem.name.forallMetaTelescopeReducing
   let mkApp2 _ lhs rhs ← whnf eqn | throwError "Exected an equality or iff, not {eqn}"
@@ -126,7 +131,7 @@ def checkRewrite (lem : RwLemma) (i : RwInfo) : MetaM Rewrite := do
   let mut rwKind := i.rwKind
   for mvar in mvars, bi in binderInfos do
     unless ← mvar.mvarId!.isAssigned do
-      if ← pure (!rwKind matches .hasBVars) <&&> isProof mvar <&&> mvar.mvarId!.assumptionCore then
+      if ← pure (rwKind matches .valid ..) <&&> isProof mvar <&&> mvar.mvarId!.assumptionCore then
         justLemmaName := false
       else
         extraGoals := extraGoals.push (mvar.mvarId!, bi)
@@ -153,64 +158,30 @@ def checkRewrite (lem : RwLemma) (i : RwInfo) : MetaM Rewrite := do
     name := lem.name.toString
     replacement := ← abstractMVars replacement
   }
-  return { lem with
-    proof, replacement, extraGoals, makesNewMVars, isRefl, key, justLemmaName, rwKind,
-    hyp? := i.hyp? }
-
-public instance : Ord RwKey where
-  compare a b :=
-    (compare a.1 b.1).then <|
-    (compare a.2 b.2).then <|
-    (compare a.3 b.3).then <|
-    (compare a.4 b.4).then <|
-    (compare a.5 b.5)
-
-public def RwKey.isDuplicate (a b : RwKey) : MetaM Bool :=
-  pure (a.replacement.mvars.size == b.replacement.mvars.size)
-    <&&> isExplicitEq a.replacement.expr b.replacement.expr
-
-open Widget ProofWidgets Jsx Server
-
-/-- Return the rewrite tactic that performs the rewrite. -/
-def tacticSyntax (rw : Rewrite) : MetaM (TSyntax `tactic) := do
-  let proof ← if rw.justLemmaName then
-      `(term| $(mkIdent <| ← rw.name.unresolveName))
-    else
-      withOptions (pp.mvars.set · false) (PrettyPrinter.delab rw.proof)
-  mkRewrite rw.rwKind rw.symm proof rw.hyp?
-
-/-- Construct the `Result` from a `Rewrite`. -/
-def Rewrite.toResult (rw : Rewrite) (pasteInfo : PasteInfo) : MetaM (Result RwKey) := do
-  let tactic ← tacticSyntax rw
-  let replacementString ← ppExprTagged rw.replacement
-  let mut extraGoals := #[]
-  for (mvarId, bi) in rw.extraGoals do
+  let tactic ← tacticSyntax lem rwKind i.hyp? proof justLemmaName
+  let replacementString ← ppExprTagged replacement
+  let mut explicitGoals := #[]
+  for (mvarId, bi) in extraGoals do
     -- TODO: think more carefully about which goals should be displayed
     -- Are there lemmas where a hypothesis is marked as implicit,
     -- which we would still want to show as a new goal?
     if bi.isExplicit then
-      extraGoals := extraGoals.push (← ppExprTagged (← mvarId.getType))
+      explicitGoals := explicitGoals.push (← ppExprTagged (← mvarId.getType))
   let mut htmls := #[<InteractiveCode fmt={replacementString}/>]
-  for extraGoal in extraGoals do
+  for extraGoal in explicitGoals do
     htmls := htmls.push
       <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={extraGoal}/> </div>
   let filtered ←
-    if !rw.isRefl && !rw.makesNewMVars then
-      some <$> mkSuggestion tactic pasteInfo (.element "div" #[] htmls)
+    if !isRefl && !makesNewMVars then
+      some <$> mkSuggestion tactic i.pasteInfo (.element "div" #[] htmls)
     else
       pure none
-  htmls := htmls.push (<div> {← rw.name.toHtml} </div>)
-  let unfiltered ← mkSuggestion tactic pasteInfo (.element "div" #[] htmls)
-  let pattern ← forallTelescopeReducing (← rw.name.getType) fun _ e => do
+  htmls := htmls.push (<div> {← lem.name.toHtml} </div>)
+  let unfiltered ← mkSuggestion tactic i.pasteInfo (.element "div" #[] htmls)
+  let pattern ← forallTelescopeReducing (← lem.name.getType) fun _ e => do
     let mkApp2 _ lhs rhs ← whnf e | throwError "Expected equation, not{indentExpr e}"
-    ppExprTagged <| if rw.symm then rhs else lhs
-  return { filtered, unfiltered, key := rw.key, pattern }
+    ppExprTagged <| if lem.symm then rhs else lhs
+  return { filtered, unfiltered, key, pattern }
 
-/-- `generateSuggestion` is called in parallel for all rewrite lemmas. -/
-public def RwLemma.generateSuggestion (i : RwInfo) (lem : RwLemma) :
-    MetaM (Result RwKey) := do
-  withReducible do withNewMCtxDepth do
-  let rewrite ← checkRewrite lem i
-  rewrite.toResult i.pasteInfo
 
 end InfoviewSearch

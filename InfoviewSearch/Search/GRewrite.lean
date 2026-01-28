@@ -8,15 +8,15 @@ module
 public import InfoviewSearch.Search.SectionState
 public import Mathlib.Order.Antisymmetrization
 
-meta section
+public meta section
 
 namespace InfoviewSearch
 
-open Lean Meta Mathlib.Tactic
+open Lean Meta Mathlib.Tactic Widget ProofWidgets Jsx Server
 
 /-- `GRewritePos` contains the ìnformation about a given subexpression position needed for
 applying a  `grw` lemma. -/
-public structure GrwPos where
+structure GrwPos where
   /-- The name of the relation. -/
   relName : Name
   /-- The expression of the relation. -/
@@ -27,7 +27,7 @@ public structure GrwPos where
 
 /-- Given the relation that we can use to rewrite at the give position, figure out all of the
 subrelations that could be used instead. -/
-def gcongrBackward (relName : Name) (relation : Expr) (symm : Bool) :
+private def gcongrBackward (relName : Name) (relation : Expr) (symm : Bool) :
     MetaM (Array GrwPos) := do
   let type ← inferType relation
   let α ← mkFreshTypeMVar
@@ -96,7 +96,7 @@ private def dummyDischarger (ref : IO.Ref (Array GrwPos)) (hyp? : Bool) (fvar : 
   throw <| .error default "dummyError"
 
 /-- Determine possible ways in which a `grw` call could rewrite at the given subexpression. -/
-public def getGrwPos? (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (hyp? : Bool) :
+def getGrwPos? (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (hyp? : Bool) :
     MetaM (Array GrwPos) := do
   withLocalDeclD `_a (← inferType subExpr) fun fvar => do
   let root' ← replaceSubexpr (fun _ => pure (GCongr.mkHoleAnnotation fvar)) pos rootExpr
@@ -119,7 +119,7 @@ public def getGrwPos? (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (hyp? : Bool
 
 
 /-- The structure for rewrite lemmas stored in the `RefinedDiscrTree`. -/
-public structure GrwLemma where
+structure GrwLemma where
   /-- The lemma -/
   name : Premise
   /-- `symm` is `true` when rewriting from right to left -/
@@ -127,7 +127,7 @@ public structure GrwLemma where
   /-- `relName` is the relation of the lemma. -/
   relName : Name
 
-public structure GrwInfo where
+structure GrwInfo where
   pasteInfo : PasteInfo
   rootExpr : Expr
   subExpr : Expr
@@ -136,7 +136,7 @@ public structure GrwInfo where
   rwKind : RwKind
   gpos : Array GrwPos
 
-public structure GrwKey where
+structure GrwKey where
   numGoals : Nat
   nameLenght : Nat
   replacementSize : Nat
@@ -147,26 +147,30 @@ public structure GrwKey where
   replacement : AbstractMVarsResult
 deriving Inhabited
 
-/-- A rewrite lemma that has been applied to an expression. -/
-structure GRewrite extends GrwLemma where
-  /-- The proof of the rewrite -/
-  proof : Expr
-  /-- The replacement expression obtained from the rewrite -/
-  replacement : Expr
-  /-- The extra goals created by the rewrite -/
-  extraGoals : Array (MVarId × BinderInfo)
-  /-- Whether the rewrite introduces a new metavariable in the replacement expression -/
-  makesNewMVars : Bool
-  /-- Whether the rewrite is reflexive -/
-  isRefl : Bool
-  key : GrwKey
-  justLemmaName : Bool
-  hyp? : Option Name
-  rwKind : RwKind
+instance : Ord GrwKey where
+  compare a b :=
+    (compare a.1 b.1).then <|
+    (compare a.2 b.2).then <|
+    (compare a.3 b.3).then <|
+    (compare a.4 b.4)
+
+def GrwKey.isDuplicate (a b : GrwKey) : MetaM Bool :=
+  pure (a.replacement.mvars.size == b.replacement.mvars.size)
+    <&&> isExplicitEq a.replacement.expr b.replacement.expr
+
+/-- Return the rewrite tactic that performs the rewrite. -/
+private def tacticSyntax (lem : GrwLemma) (i : GrwInfo) (proof : Expr) (justLemmaName : Bool) :
+    MetaM (TSyntax `tactic):= do
+  let proof ← if justLemmaName then
+      `(term| $(mkIdent <| ← lem.name.unresolveName))
+    else
+      withOptions (pp.mvars.set · false) (PrettyPrinter.delab proof)
+  mkRewrite i.rwKind lem.symm proof i.hyp? (grw := true)
 
 set_option linter.style.emptyLine false in
-/-- If `thm` can be used to rewrite `e`, return the rewrite. -/
-def checkGRewrite (lem : GrwLemma) (i : GrwInfo) : MetaM GRewrite := do
+/-- Generate the suggestion for rewriting with `lem`. -/
+def GrwLemma.generateSuggestion (i : GrwInfo) (lem : GrwLemma) : MetaM (Result GrwKey) := do
+  withReducible do withNewMCtxDepth do
   let mctx ← getMCtx
   (·.getDM do throwError "no suitable `grw` relation was found") =<< i.gpos.findSomeM? fun pos ↦ do
   unless lem.relName == pos.relName && pos.symm?.all (· == lem.symm) do return none
@@ -207,63 +211,30 @@ def checkGRewrite (lem : GrwLemma) (i : GrwInfo) : MetaM GRewrite := do
     name := lem.name.toString
     replacement := ← abstractMVars replacement
   }
-  return { lem with
-    proof, replacement, extraGoals, makesNewMVars, isRefl, key, justLemmaName, hyp? := i.hyp?,
-    rwKind := i.rwKind }
-
-public instance : Ord GrwKey where
-  compare a b :=
-    (compare a.1 b.1).then <|
-    (compare a.2 b.2).then <|
-    (compare a.3 b.3).then <|
-    (compare a.4 b.4)
-
-public def GrwKey.isDuplicate (a b : GrwKey) : MetaM Bool :=
-  pure (a.replacement.mvars.size == b.replacement.mvars.size)
-    <&&> isExplicitEq a.replacement.expr b.replacement.expr
-
-open Widget ProofWidgets Jsx Server
-
-/-- Return the rewrite tactic that performs the rewrite. -/
-def tacticSyntax (grw : GRewrite) : MetaM (TSyntax `tactic) := do
-  let proof ← if grw.justLemmaName then
-      `(term| $(mkIdent <| ← grw.name.unresolveName))
-    else
-      withOptions (pp.mvars.set · false) (PrettyPrinter.delab grw.proof)
-  mkRewrite grw.rwKind grw.symm proof grw.hyp? (grw := true)
-
-/-- Construct the `Result` from a `GRewrite`. -/
-def GRewrite.toResult (grw : GRewrite) (pasteInfo : PasteInfo) : MetaM (Result GrwKey) := do
-  let tactic ← tacticSyntax grw
-  let replacement ← ppExprTagged grw.replacement
-  let mut extraGoals := #[]
-  for (mvarId, bi) in grw.extraGoals do
+  let tactic ← tacticSyntax lem i proof justLemmaName
+  let replacement ← ppExprTagged replacement
+  let mut explicitGoals := #[]
+  for (mvarId, bi) in extraGoals do
     -- TODO: think more carefully about which goals should be displayed
     -- Are there lemmas where a hypothesis is marked as implicit,
     -- which we would still want to show as a new goal?
     if bi.isExplicit then
-      extraGoals := extraGoals.push (← ppExprTagged (← mvarId.getType))
+      explicitGoals := explicitGoals.push (← ppExprTagged (← mvarId.getType))
   let mut htmls := #[<div> <InteractiveCode fmt={replacement}/> </div>]
-  for extraGoal in extraGoals do
+  for extraGoal in explicitGoals do
     htmls := htmls.push
       <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={extraGoal}/> </div>
   let filtered ←
-    if !grw.isRefl && !grw.makesNewMVars then
-      some <$> mkSuggestion tactic pasteInfo (.element "div" #[] htmls)
+    if !isRefl && !makesNewMVars then
+      some <$> mkSuggestion tactic i.pasteInfo (.element "div" #[] htmls)
     else
       pure none
-  htmls := htmls.push (<div> {← grw.name.toHtml} </div>)
-  let unfiltered ← mkSuggestion tactic pasteInfo (.element "div" #[] htmls)
-  let pattern ← forallTelescopeReducing (← grw.name.getType) fun _ e => do
+  htmls := htmls.push (<div> {← lem.name.toHtml} </div>)
+  let unfiltered ← mkSuggestion tactic i.pasteInfo (.element "div" #[] htmls)
+  let pattern ← forallTelescopeReducing (← lem.name.getType) fun _ e => do
     let mkApp2 _ lhs rhs := (← instantiateMVars e).cleanupAnnotations
       | throwError "Expected relation, not {indentExpr e}"
-    ppExprTagged <| if grw.symm then rhs else lhs
-  return { filtered, unfiltered, key := grw.key, pattern }
-
-/-- `generateSuggestion` is called in parallel for all rewrite lemmas. -/
-public def GrwLemma.generateSuggestion (i : GrwInfo) (lem : GrwLemma) : MetaM (Result GrwKey) := do
-  withReducible do withNewMCtxDepth do
-  let rewrite ← checkGRewrite lem i
-  rewrite.toResult i.pasteInfo
+    ppExprTagged <| if lem.symm then rhs else lhs
+  return { filtered, unfiltered, key, pattern }
 
 end InfoviewSearch
