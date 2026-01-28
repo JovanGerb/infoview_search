@@ -3,17 +3,20 @@ module
 public import InfoviewSearch.Search.SectionState
 public import Mathlib.Tactic.ApplyAt
 
-public meta section
+meta section
 
 namespace InfoviewSearch
 open Lean Meta Widget Server ProofWidgets Jsx
 
-structure AppAtLemma where
+public structure ApplyAtLemma where
   name : Premise
 
-namespace ApplyAt
+public structure ApplyAtInfo where
+  pasteInfo : PasteInfo
+  target : Expr
+  hyp : Name
 
-structure ResultId where
+public structure ApplyAtKey where
   numGoals : Nat
   nameLenght : Nat
   replacementSize : Nat
@@ -22,7 +25,7 @@ structure ResultId where
 deriving Inhabited
 
 /-- A apply lemma that has been applied to an expression. -/
-structure Application extends AppAtLemma where
+structure Application extends ApplyAtLemma where
   /-- The proof of the application -/
   proof : Expr
   /-- The replacement expression obtained from the rewrite -/
@@ -31,17 +34,16 @@ structure Application extends AppAtLemma where
   newGoals : Array (MVarId × BinderInfo)
   /-- Whether any of the new goals contain another a new metavariable -/
   makesNewMVars : Bool
-  info : ResultId
+  key : ApplyAtKey
   hyp : Name
 
 set_option linter.style.emptyLine false in
 /-- If `thm` can be used to apply to `target`, return the applications. -/
-def checkApplication (lem : AppAtLemma) (target : Expr) (hyp : Name) :
-    MetaM Application := do
+def checkApplication (lem : ApplyAtLemma) (i : ApplyAtInfo) : MetaM Application := do
   let (proof, mvars, binderInfos, replacement) ← lem.name.forallMetaTelescopeReducing
-  let assume ← inferType mvars.back!
+  let e ← inferType mvars.back!
   let mvars := mvars.pop
-  unless ← isDefEq assume target do throwError "{assume} does not unify with {target}"
+  unless ← isDefEq e i.target do throwError "{e} does not unify with {i.target}"
   synthAppInstances `infoview_search default mvars binderInfos false false
   let mut newGoals := #[]
   for mvar in mvars, bi in binderInfos do
@@ -55,7 +57,7 @@ def checkApplication (lem : AppAtLemma) (target : Expr) (hyp : Name) :
       let type ← instantiateMVars <| ← goal.1.getType
       return (type.findMVar? fun mvarId => mvars.any (·.mvarId! == mvarId)).isSome
   let proof ← instantiateMVars proof
-  let info := {
+  let key := {
     numGoals := newGoals.size
     nameLenght := lem.name.length
     replacementSize := ← newGoals.foldlM (init := 0) fun s g =>
@@ -63,16 +65,16 @@ def checkApplication (lem : AppAtLemma) (target : Expr) (hyp : Name) :
     name := lem.name.toString
     newGoals := ← newGoals.mapM fun g => do abstractMVars (← g.1.getType)
   }
-  return { lem with proof, replacement, newGoals, makesNewMVars, info, hyp }
+  return { lem with proof, replacement, newGoals, makesNewMVars, key, hyp := i.hyp }
 
-instance : Ord ResultId where
+public instance : Ord ApplyAtKey where
   compare a b :=
     (compare a.1 b.1).then <|
     (compare a.2 b.2).then <|
     (compare a.3 b.3).then <|
     (compare a.4 b.4)
 
-def ResultId.isDuplicate (a b : ResultId) : MetaM Bool :=
+public def ApplyAtKey.isDuplicate (a b : ApplyAtKey) : MetaM Bool :=
   pure (a.newGoals.size == b.newGoals.size) <&&>
   a.newGoals.size.allM fun i _ =>
     pure (a.newGoals[i]!.mvars.size == b.newGoals[i]!.mvars.size)
@@ -86,7 +88,7 @@ def tacticSyntax (app : Application) : MetaM (TSyntax `tactic) := do
 set_option linter.style.emptyLine false in
 /-- Construct the `Result` from an `Application`. -/
 def Application.toResult (app : Application) (pasteInfo : PasteInfo) :
-    MetaM (Result ResultId) := do
+    MetaM (Result ApplyAtKey) := do
   let tactic ← tacticSyntax app
   let replacement ← ppExprTagged app.replacement
   let mut newGoals := #[]
@@ -109,13 +111,13 @@ def Application.toResult (app : Application) (pasteInfo : PasteInfo) :
   let unfiltered ← mkSuggestion tactic pasteInfo (.element "div" #[] htmls)
   let pattern ← forallTelescopeReducing (← app.name.getType) fun xs _ => do
     ppExprTagged (← inferType xs.back!)
-  return { filtered, unfiltered, info := app.info, pattern }
+  return { filtered, unfiltered, key := app.key, pattern }
 
 /-- `generateSuggestion` is called in parallel for all apply lemmas. -/
-def generateSuggestion (expr : Expr) (pasteInfo : PasteInfo) (hyp : Name) (lem : AppAtLemma) :
-    MetaM (Result ResultId) :=
+public def ApplyAtLemma.generateSuggestion (lem : ApplyAtLemma) (i : ApplyAtInfo) :
+    MetaM (Result ApplyAtKey) :=
   withReducible do withNewMCtxDepth do
-  let app ← checkApplication lem expr hyp
-  app.toResult pasteInfo
+  let app ← checkApplication lem i
+  app.toResult i.pasteInfo
 
-end InfoviewSearch.ApplyAt
+end InfoviewSearch

@@ -55,22 +55,28 @@ Ways to extend `rw!?`:
 
 -/
 
-public meta section
+meta section
 
 namespace InfoviewSearch
 
 open Lean Meta
 
 /-- The structure for rewrite lemmas stored in the `RefinedDiscrTree`. -/
-structure RwLemma where
+public structure RwLemma where
   /-- The lemma -/
   name : Premise
   /-- `symm` is `true` when rewriting from right to left -/
   symm : Bool
 
-namespace Rw
+public structure RwInfo where
+  pasteInfo : PasteInfo
+  rootExpr : Expr
+  subExpr : Expr
+  pos : SubExpr.Pos
+  hyp? : Option Name
+  occ : LOption Nat
 
-structure ResultId where
+public structure RwKey where
   numGoals : Nat
   symm : Bool
   nameLenght : Nat
@@ -94,16 +100,15 @@ structure Rewrite extends RwLemma where
   makesNewMVars : Bool
   /-- Whether the rewrite is reflexive -/
   isRefl : Bool
-  info : ResultId
+  key : RwKey
   justLemmaName : Bool
   hyp? : Option Name
   occ : LOption Nat
 
 set_option linter.style.emptyLine false in
 /-- If `thm` can be used to rewrite `e`, return the rewrite. -/
-def checkRewrite (lem : RwLemma) (rootExpr : Expr) (subExpr : SubExpr)
-    (hyp? : Option Name) (occ : LOption Nat) : MetaM Rewrite := do
-  let e := subExpr.expr
+def checkRewrite (lem : RwLemma) (i : RwInfo) : MetaM Rewrite := do
+  let e := i.subExpr
   let (proof, mvars, binderInfos, eqn) ← lem.name.forallMetaTelescopeReducing
   let mkApp2 _ lhs rhs ← whnf eqn | throwError "Exected an equality or iff, not {eqn}"
   let (lhs, rhs) := if lem.symm then (rhs, lhs) else (lhs, rhs)
@@ -118,7 +123,7 @@ def checkRewrite (lem : RwLemma) (rootExpr : Expr) (subExpr : SubExpr)
   synthAppInstances `infoview_search default mvars binderInfos false false
   let mut extraGoals := #[]
   let mut justLemmaName := true
-  let mut occ := occ
+  let mut occ := i.occ
   for mvar in mvars, bi in binderInfos do
     unless ← mvar.mvarId!.isAssigned do
       if ← pure (!occ matches .undef) <&&> isProof mvar <&&> mvar.mvarId!.assumptionCore then
@@ -135,11 +140,11 @@ def checkRewrite (lem : RwLemma) (rootExpr : Expr) (subExpr : SubExpr)
   let proof ← instantiateMVars proof
   let isRefl ← isExplicitEq e replacement
   if !occ matches .undef && justLemmaName then
-    if ← withMCtx mctxOrig do kabstractFindsPositions rootExpr lhsOrig subExpr.pos then
+    if ← withMCtx mctxOrig do kabstractFindsPositions i.rootExpr lhsOrig i.pos then
       occ := .none
     else
       justLemmaName := false
-  let info := {
+  let key := {
     numGoals := extraGoals.size
     symm := lem.symm
     nameLenght := lem.name.length
@@ -148,9 +153,10 @@ def checkRewrite (lem : RwLemma) (rootExpr : Expr) (subExpr : SubExpr)
     replacement := ← abstractMVars replacement
   }
   return { lem with
-    proof, replacement, extraGoals, makesNewMVars, isRefl, info, justLemmaName, occ, hyp? }
+    proof, replacement, extraGoals, makesNewMVars, isRefl, key, justLemmaName, occ,
+    hyp? := i.hyp? }
 
-instance : Ord ResultId where
+public instance : Ord RwKey where
   compare a b :=
     (compare a.1 b.1).then <|
     (compare a.2 b.2).then <|
@@ -158,7 +164,7 @@ instance : Ord ResultId where
     (compare a.4 b.4).then <|
     (compare a.5 b.5)
 
-def ResultId.isDuplicate (a b : ResultId) : MetaM Bool :=
+public def RwKey.isDuplicate (a b : RwKey) : MetaM Bool :=
   pure (a.replacement.mvars.size == b.replacement.mvars.size)
     <&&> isExplicitEq a.replacement.expr b.replacement.expr
 
@@ -173,7 +179,7 @@ def tacticSyntax (rw : Rewrite) : MetaM (TSyntax `tactic) := do
   mkRewrite rw.occ rw.symm proof rw.hyp?
 
 /-- Construct the `Result` from a `Rewrite`. -/
-def Rewrite.toResult (rw : Rewrite) (pasteInfo : PasteInfo) : MetaM (Result ResultId) := do
+def Rewrite.toResult (rw : Rewrite) (pasteInfo : PasteInfo) : MetaM (Result RwKey) := do
   let tactic ← tacticSyntax rw
   let replacementString ← ppExprTagged rw.replacement
   let mut extraGoals := #[]
@@ -197,14 +203,13 @@ def Rewrite.toResult (rw : Rewrite) (pasteInfo : PasteInfo) : MetaM (Result Resu
   let pattern ← forallTelescopeReducing (← rw.name.getType) fun _ e => do
     let mkApp2 _ lhs rhs ← whnf e | throwError "Expected equation, not{indentExpr e}"
     ppExprTagged <| if rw.symm then rhs else lhs
-  return { filtered, unfiltered, info := rw.info, pattern }
+  return { filtered, unfiltered, key := rw.key, pattern }
 
 /-- `generateSuggestion` is called in parallel for all rewrite lemmas. -/
-def generateSuggestion (rootExpr : Expr) (subExpr : SubExpr) (pasteInfo : PasteInfo)
-    (hyp? : Option Name) (occ : LOption Nat) (lem : RwLemma) :
-    MetaM (Result ResultId) := do
+public def RwLemma.generateSuggestion (i : RwInfo) (lem : RwLemma) :
+    MetaM (Result RwKey) := do
   withReducible do withNewMCtxDepth do
-  let rewrite ← checkRewrite lem rootExpr subExpr hyp? occ
-  rewrite.toResult pasteInfo
+  let rewrite ← checkRewrite lem i
+  rewrite.toResult i.pasteInfo
 
-end InfoviewSearch.Rw
+end InfoviewSearch

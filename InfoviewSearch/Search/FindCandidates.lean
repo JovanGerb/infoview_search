@@ -76,8 +76,8 @@ where
 structure Entries where
   rw : Array (Key × LazyEntry × RwLemma) := #[]
   grw : Array (Key × LazyEntry × GrwLemma) := #[]
-  app : Array (Key × LazyEntry × AppLemma) := #[]
-  appAt : Array (Key × LazyEntry × AppAtLemma) := #[]
+  app : Array (Key × LazyEntry × ApplyLemma) := #[]
+  appAt : Array (Key × LazyEntry × ApplyAtLemma) := #[]
 
 def insertEntry {α} (arr : Array (Key × LazyEntry × α)) (key : Expr) (a : α) :
     MetaM (Array (Key × LazyEntry × α)) := do
@@ -167,8 +167,8 @@ def Entries.addVar (choice : Choice) (entries : Entries) (decl : LocalDecl) : Me
 public structure PreDiscrTrees where
   rw : PreDiscrTree RwLemma := {}
   grw : PreDiscrTree GrwLemma := {}
-  app : PreDiscrTree AppLemma := {}
-  appAt : PreDiscrTree AppAtLemma := {}
+  app : PreDiscrTree ApplyLemma := {}
+  appAt : PreDiscrTree ApplyAtLemma := {}
 
 def PreDiscrTrees.append (pres : PreDiscrTrees) (maps : Entries) : PreDiscrTrees where
   rw := maps.rw.foldl (init := pres.rw) fun pre (key, e) ↦ pre.push key e
@@ -180,9 +180,9 @@ public initialize rwRef : IO.Ref (Option (Task (Option (RefinedDiscrTree RwLemma
   IO.mkRef none
 public initialize grwRef : IO.Ref (Option (Task (Option (RefinedDiscrTree GrwLemma)))) ←
   IO.mkRef none
-public initialize appRef : IO.Ref (Option (Task (Option (RefinedDiscrTree AppLemma)))) ←
+public initialize appRef : IO.Ref (Option (Task (Option (RefinedDiscrTree ApplyLemma)))) ←
   IO.mkRef none
-public initialize appAtRef : IO.Ref (Option (Task (Option (RefinedDiscrTree AppAtLemma)))) ←
+public initialize appAtRef : IO.Ref (Option (Task (Option (RefinedDiscrTree ApplyAtLemma)))) ←
   IO.mkRef none
 
 def setRefIfNone {α} [Nonempty α] (ref : IO.Ref (Option (Task (Option α)))) :

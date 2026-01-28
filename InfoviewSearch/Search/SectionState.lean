@@ -15,13 +15,13 @@ structure Result (α : Type) where
   filtered : Option Html
   /-- `unfiltered` will be shown in the unfiltered view. -/
   unfiltered : Html
-  /-- `info` is used for sorting and comparing theorems. -/
-  info : α
+  /-- `key` is used for sorting and comparing theorems. -/
+  key : α
   /-- The `pattern` of the first lemma in a section is shown in the header of that section. -/
   pattern : CodeWithInfos
 deriving Inhabited
 
-instance [Ord α] : Ord (Result α) := ⟨(compare ·.info ·.info)⟩
+instance [Ord α] : Ord (Result α) := ⟨(compare ·.key ·.key)⟩
 instance [Ord α] : LT (Result α) := ltOfOrd
 
 /-! ### Maintaining the state of the widget -/
@@ -71,7 +71,7 @@ where
     unless result.filtered.isSome do
       return none
     results.findIdxM? fun res =>
-      pure res.filtered.isSome <&&> isDup res.info result.info
+      pure res.filtered.isSome <&&> isDup res.key result.key
 
 /-- Go through the pending entries in the section state, and each of the entries that have
 finished evaluating will be added to the finished result. -/

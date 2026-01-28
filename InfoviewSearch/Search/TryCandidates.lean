@@ -14,10 +14,10 @@ namespace InfoviewSearch
 open Lean Server Widget ProofWidgets Jsx
 
 inductive Candidates where
-  | rw (hyp? : Option Name) (arr : Array RwLemma)
-  | grw (hyp? : Option Name) (arr : Array GrwLemma)
-  | app (arr : Array AppLemma)
-  | appAt (hyp : Name) (arr : Array AppAtLemma)
+  | rw (i : RwInfo) (arr : Array RwLemma)
+  | grw (i : GrwInfo) (arr : Array GrwLemma)
+  | app (i : ApplyInfo) (arr : Array ApplyLemma)
+  | appAt (i : ApplyAtInfo) (arr : Array ApplyAtLemma)
 
 local instance {α β cmp} [Append β] : Append (Std.TreeMap α β cmp) :=
   ⟨.mergeWith fun _ ↦ (· ++ ·)⟩
@@ -27,34 +27,39 @@ open Meta.RefinedDiscrTree in
 of sections of candidates, where each section corresponds to one kind of match with the
 discrimination tree. -/
 @[inline]
-def getCandidatesAux (rootExpr : Expr) (subExpr : SubExpr) (gpos : Array GrwPos)
-    (hyp? : Option Name)
+def getCandidatesAux (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (gpos : Array GrwPos)
+    (occ : LOption Nat) (hyp? : Option Name) (pasteInfo : PasteInfo)
     (rw : Expr → MetaM (MatchResult RwLemma)) (grw : Expr → MetaM (MatchResult GrwLemma))
-    (app : Expr → MetaM (MatchResult AppLemma)) (appAt : Expr → MetaM (MatchResult AppAtLemma)) :
-    MetaM (Array Candidates) := do
+    (app : Expr → MetaM (MatchResult ApplyLemma)) (appAt : Expr → MetaM (MatchResult ApplyAtLemma))
+    : MetaM (Array Candidates) := do
   let mut cands : Std.TreeMap Nat (Array Candidates) := {}
   /- The order in which we show the suggestions for the same pattern for different tactics
   depends on the following insertion order.
   We choose the order `grw` => `rw` => `apply(at)`. -/
   if !gpos.isEmpty then
-    cands := cands ++ (← grw subExpr.expr).elts.map fun _ ↦ (·.map (.grw hyp?))
-  cands := cands ++ (← rw subExpr.expr).elts.map fun _ ↦ (·.map (.rw hyp?))
-  if subExpr.pos == .root then
+    cands := cands ++ (← grw subExpr).elts.map fun _ ↦ (·.map <|
+      .grw { pasteInfo, rootExpr, subExpr, pos, hyp?, occ, gpos })
+  cands := cands ++ (← rw subExpr).elts.map fun _ ↦ (·.map (.rw <|
+    { pasteInfo, rootExpr, subExpr, pos, hyp?, occ }))
+  if pos == .root then
     if let some hyp := hyp? then
-      cands := cands ++ (← appAt rootExpr).elts.map fun _ ↦ (·.map (.appAt hyp))
+      cands := cands ++ (← appAt rootExpr).elts.map fun _ ↦ (·.map (.appAt <|
+        { pasteInfo, target := rootExpr, hyp }))
     else
-      cands := cands ++ (← app rootExpr).elts.map fun _ ↦ (·.map .app)
+      cands := cands ++ (← app rootExpr).elts.map fun _ ↦ (·.map (.app <|
+        { pasteInfo, target := rootExpr }))
   return cands.foldr (init := #[]) fun _ val acc ↦ acc ++ val
 
-def getImportCandidates (rootExpr : Expr) (subExpr : SubExpr) (gpos : Array GrwPos)
-    (hyp? : Option Name) : MetaM (Array Candidates) :=
-  getCandidatesAux rootExpr subExpr gpos hyp?
+def getImportCandidates (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (gpos : Array GrwPos)
+    (occ : LOption Nat) (hyp? : Option Name) (pasteInfo : PasteInfo) : MetaM (Array Candidates) :=
+  getCandidatesAux rootExpr subExpr pos gpos occ hyp? pasteInfo
     (getImportMatches rwRef) (getImportMatches grwRef)
     (getImportMatches appRef) (getImportMatches appAtRef)
 
-def getCandidates (rootExpr : Expr) (subExpr : SubExpr) (gpos : Array GrwPos)
-    (hyp? : Option Name) (pres : PreDiscrTrees) : MetaM (Array Candidates) :=
-  getCandidatesAux rootExpr subExpr gpos hyp?
+def getCandidates (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (gpos : Array GrwPos)
+    (occ : LOption Nat) (hyp? : Option Name) (pasteInfo : PasteInfo) (pres : PreDiscrTrees) :
+    MetaM (Array Candidates) :=
+  getCandidatesAux rootExpr subExpr pos gpos occ hyp? pasteInfo
     (getMatches pres.rw.toRefinedDiscrTree) (getMatches pres.grw.toRefinedDiscrTree)
     (getMatches pres.app.toRefinedDiscrTree) (getMatches pres.appAt.toRefinedDiscrTree)
 
@@ -87,10 +92,10 @@ def spawnTask {α} (premise : Premise) (k : MetaM α) : MetaM <| Task (Except Ht
       </li>
 
 public inductive SectionsState where
-  | rw (s : SectionState Rw.ResultId)
-  | grw (s : SectionState Grw.ResultId)
-  | app (s : SectionState Apply.ResultId)
-  | appAt (s : SectionState ApplyAt.ResultId)
+  | rw (s : SectionState RwKey)
+  | grw (s : SectionState GrwKey)
+  | app (s : SectionState ApplyKey)
+  | appAt (s : SectionState ApplyAtKey)
 
 def SectionsState.isFinished : SectionsState → Bool
   | .rw s | .grw s | .app s | .appAt s => s.pending.isEmpty
@@ -98,21 +103,15 @@ def SectionsState.isFinished : SectionsState → Bool
 def SectionsState.hasProgressed : SectionsState → BaseIO Bool
   | .rw s | .grw s | .app s | .appAt s => s.pending.anyM IO.hasFinished
 
-private def Candidates.generateSuggestions (rootExpr : Expr) (subExpr : SubExpr)
-    (pasteInfo : PasteInfo) (occ : LOption Nat)
-    (source : Source) (gpos : Array GrwPos) : Candidates → MetaM SectionsState
-  | .rw hyp? arr => do
-    .rw <$> .new source <$> arr.mapM fun lem ↦
-      spawnTask lem.name <| Rw.generateSuggestion rootExpr subExpr pasteInfo hyp? occ lem
-  | .grw hyp? arr => do
-    .grw <$> .new source <$> arr.mapM fun lem ↦
-      spawnTask lem.name <| Grw.generateSuggestion rootExpr subExpr pasteInfo gpos hyp? occ lem
-  | app arr => do
-    .app <$> .new source <$> arr.mapM fun lem ↦
-      spawnTask lem.name <| Apply.generateSuggestion rootExpr pasteInfo lem
-  | appAt hyp arr => do
-    .appAt <$> .new source <$> arr.mapM fun lem ↦
-      spawnTask lem.name <| ApplyAt.generateSuggestion rootExpr pasteInfo hyp lem
+def Candidates.generateSuggestions (source : Source) : Candidates → MetaM SectionsState
+  | .rw i arr => .rw <$>
+    .new source <$> arr.mapM fun lem ↦ spawnTask lem.name <| lem.generateSuggestion i
+  | .grw i arr => .grw <$>
+    .new source <$> arr.mapM fun lem ↦ spawnTask lem.name <| lem.generateSuggestion i
+  | .app i arr => .app <$>
+    .new source <$> arr.mapM fun lem ↦ spawnTask lem.name <| lem.generateSuggestion i
+  | .appAt i arr => .appAt <$>
+    .new source <$> arr.mapM fun lem ↦ spawnTask lem.name <| lem.generateSuggestion i
 
 /-- While the suggestions are computed, `WidgetState` is used to keep track of the progress.
 Initially, it contains a bunch of unfinished `Task`s, and with each round of `updateWidgetState`,
@@ -127,40 +126,39 @@ public structure WidgetState where
   header : Html
 
 set_option linter.style.emptyLine false in
-public def initializeWidgetState (rootExpr : Expr) (subExpr : SubExpr) (pasteInfo : PasteInfo)
-    (occ : LOption Nat) (fvarId? : Option FVarId) (parentDecl? : Option Name) :
+public def initializeWidgetState (rootExpr subExpr : Expr) (pos : SubExpr.Pos)
+    (pasteInfo : PasteInfo) (occ : LOption Nat) (fvarId? : Option FVarId)
+    (parentDecl? : Option Name) :
     MetaM WidgetState := do
   Core.checkSystem "infoview_search"
   let mut sections := #[]
 
-  let gpos ← getGrwPos? rootExpr subExpr fvarId?.isSome
+  let gpos ← getGrwPos? rootExpr subExpr pos fvarId?.isSome
   let choice : Choice := {
     rw := true
     grw := !gpos.isEmpty
-    app := subExpr.pos == .root && fvarId?.isNone
-    appAt := subExpr.pos == .root && fvarId?.isSome
+    app := pos == .root && fvarId?.isNone
+    appAt := pos == .root && fvarId?.isSome
   }
   let pres ← computeLCtxDiscrTrees choice fvarId?
   let hyp? ← fvarId?.mapM (·.getUserName)
   Core.checkSystem "infoview_search"
-  for cand in ← getCandidates rootExpr subExpr gpos hyp? pres do
-    sections := sections.push
-      (← cand.generateSuggestions rootExpr subExpr pasteInfo occ .hypothesis gpos)
+  for cand in ← getCandidates rootExpr subExpr pos gpos occ hyp? pasteInfo pres do
+    sections := sections.push (← cand.generateSuggestions .hypothesis)
 
   let pres ← computeModuleDiscrTrees choice parentDecl?
   Core.checkSystem "infoview_search"
-  for cand in ← getCandidates rootExpr subExpr gpos hyp? pres do
-    sections := sections.push
-      (← cand.generateSuggestions rootExpr subExpr pasteInfo occ .fromFile gpos)
+  for cand in ← getCandidates rootExpr subExpr pos gpos occ hyp? pasteInfo pres do
+    sections := sections.push (← cand.generateSuggestions .fromFile)
 
   Core.checkSystem "infoview_search"
   let importTask? := some <| ← EIO.asTask <| ← dropM (m := MetaM) do
     computeImportDiscrTrees choice
-    (← getImportCandidates rootExpr subExpr gpos hyp?).mapM
-      (·.generateSuggestions rootExpr subExpr pasteInfo occ .fromImport gpos)
+    let cands ← getImportCandidates rootExpr subExpr pos gpos occ hyp? pasteInfo
+    cands.mapM (·.generateSuggestions .fromImport)
 
   return { sections, importTask?, header :=
-    <span> Lemma suggestions for <InteractiveCode fmt={← ppExprTagged subExpr.expr}/>: </span> }
+    <span> Lemma suggestions for <InteractiveCode fmt={← ppExprTagged subExpr}/>: </span> }
 
 /-- If `state.importTask?` has been evaluated, append the result to `section`. -/
 def updateImportTask (state : WidgetState) : EIO Exception WidgetState := do
