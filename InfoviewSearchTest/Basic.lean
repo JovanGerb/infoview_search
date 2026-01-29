@@ -155,7 +155,7 @@ TODO:
 
 - improve the blacklist heuristic. We should be allowed to use `.inj` and `.injEq`.
   Note: there are theorems with `Simproc` in the name, which should be excluded.
-- Allow a user-defined filter in additiion to the blacklist?
+- Allow a user-defined filter in addition to the blacklist?
 - improve `nth_rw` heuristic & add a test. Maybe, there should be a `set_option` that determines
   whether to print arguments explicitly.
 - The filterdetails should each be focused in the relevant section
@@ -179,13 +179,14 @@ TODO:
     Then we can also give multiple different `induction`/`cases` suggestions.
 - The tactics section should be extensible via an attribute.
 
-- Improve the pasting feature: if the user moved their cursor around, we still want to paste the
+- Improve the pasting feature: independent of where the cursor is, we want to paste the
   tactic in the correct place.
   This could also include special-casing for
   - the `by` token (i.e. when creating the first tactic in a sequence)
   - the focus dot `· `
   - being inside another tactic combinator, e.g. `induction`, `cases`, `on_goal`
 
-- Detect whether we are in `conv` mode.
+- Detect whether we are in `conv` mode. I don't know how to. Though the suggestions seem to
+  work just fine in conv mode
 
 -/

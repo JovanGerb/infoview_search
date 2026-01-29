@@ -210,12 +210,6 @@ def mkListElement (htmls : Array Html) (header : Html) (startOpen := true) : Htm
 
 end Widget
 
-structure ExprWithPos where
-  /-- The root Expression. -/
-  root : Expr
-  /-- The position of within the root expression. -/
-  targetPos  : SubExpr.Pos
-
 def kabstractFindsPositions (e p : Expr) (targetPos : SubExpr.Pos) : MetaM Bool := do
   let e ← instantiateMVars e
   let pHeadIdx := p.toHeadIndex
