@@ -7,9 +7,11 @@ open Lean Elab Command Meta Tactic Server InfoviewSearch
 
 deriving instance Repr for ElabInfo
 
-public meta def testTacticInsertionLogic (fileContents : String) (cursorPos : Lsp.Position)
+public meta def testTacticInsertionLogic {M}
+    [Monad M] [MonadLiftT IO M] [MonadRef M] [MonadQuotation M]
+    (fileContents : String) (cursorPos : Lsp.Position)
     (tactic : TSyntax `tactic) (expectedOutput : String)
-    (tacticInsertionLogic : TSyntax `tactic → PasteInfo → IO Lsp.TextEdit) : IO Bool := do
+    (tacticInsertionLogic : TSyntax `tactic → PasteInfo → M Lsp.TextEdit) : M Bool := do
   -- Parse the header of the provided file
   let context := Parser.mkInputContext fileContents (fileName := "test.lean")
   let (header, state, messages) ← Parser.parseHeader context
@@ -21,7 +23,7 @@ public meta def testTacticInsertionLogic (fileContents : String) (cursorPos : Ls
   let trees : List InfoTree := s.commandState.infoState.trees.toList
   let goalsAt := trees.flatMap (·.goalsAt? text (text.lspPosToUtf8Pos cursorPos))
   if h : goalsAt.length = 0 then -- TODO: Use `goalsAt.isEmpty` instead
-    throw <| IO.userError "No goals found at the given position"
+    IO.throwServerError "No goals found at the given position"
   else
     IO.println goalsAt.length
     let nearestGoalsAt := goalsAt[0]
@@ -32,7 +34,11 @@ public meta def testTacticInsertionLogic (fileContents : String) (cursorPos : Ls
     return editText fileContents (text.lspRangeToUtf8Range range) newText == expectedOutput
 where
   editText (file : String) (range : Lean.Syntax.Range) (newText : String) : String :=
-    sorry
+    let startPos : file.Pos :=
+      if hValid : range.start.IsValid file then ⟨range.start, hValid⟩ else file.endPos
+    let endPos : file.Pos :=
+      if hValid : range.stop.IsValid file then ⟨range.stop, hValid⟩ else file.endPos
+    file.extract file.startPos startPos ++ newText ++ file.extract endPos file.endPos
 
 private def testFile : String :=
 "import Lean
@@ -52,11 +58,12 @@ open Lean Elab Command Meta Tactic
 example : 1 + 1 = 2 := by
   skip
   skip
-  simp"
+  simp
+  "
 
--- #eval show MetaM _ from do
---   testTacticInsertionLogic
---     testFile { line := 7, character := 6 }
---     (← `(tactic| simp))
---     testFile.expectedOutput
---     sorry
+#eval show CoreM _ from do
+  testTacticInsertionLogic
+    testFile { line := 7, character := 6 }
+    (← `(tactic| simp))
+    testFile.expectedOutput
+    createTacticInsertionEdit
