@@ -13,6 +13,7 @@ public import Mathlib.Tactic.SimpRw
 public import Mathlib.Tactic.NthRewrite
 public import Mathlib.Tactic.DepRewrite
 public import Batteries.Tactic.PermuteGoals
+public import Mathlib.Data.String.Defs
 
 public meta section
 
@@ -175,14 +176,18 @@ def mkSuggestion (tac : TSyntax `tactic) (pasteInfo : PasteInfo)
     (html : Html) (isText := false) : CoreM Html := do
   let singleTactic ← tacticPasteString tac pasteInfo
   let (tactic, replaceRange) ← (do
-    if let some tac ← mergeTactics? pasteInfo.stx tac then
-      if let some range := pasteInfo.stx.getRange? then
-        let text := pasteInfo.meta.text
+    if let some range := pasteInfo.stx.getRange? then
+      let text := pasteInfo.meta.text
+      if let some tac ← mergeTactics? pasteInfo.stx tac then
         let endPos := max (text.lspPosToUtf8Pos pasteInfo.cursorPos) range.stop
         let extraWhitespace := range.stop.extract text.source endPos
         let tactic ← tacticPasteString tac pasteInfo
         return (tactic ++ extraWhitespace, text.utf8RangeToLspRange ⟨range.start, endPos⟩)
-    return (s!"{singleTactic}\n{String.ofList (.replicate pasteInfo.cursorPos.character ' ')}",
+      else
+        let indent := text.utf8PosToLspPos range.start |>.character
+        return (s!"\n{String.replicate indent ' '}{singleTactic}",
+          text.utf8RangeToLspRange ⟨range.stop, range.stop⟩)
+    return (s!"{singleTactic}\n{String.replicate pasteInfo.cursorPos.character ' '}",
       ⟨pasteInfo.cursorPos, pasteInfo.cursorPos⟩))
   let button :=
     -- TODO: The hover on this button should be a `CodeWithInfos`, instead of a string.
