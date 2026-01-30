@@ -107,6 +107,8 @@ public structure Choice where
   app : Bool
   appAt : Bool
 
+def Choice.any (c : Choice) : Bool := c.rw || c.grw || c.app || c.appAt
+
 /-- Given a constant, compute what needs to be added to the various discrimination trees. -/
 def Entries.addConst (choice : Choice) (entries : Entries) (name : Name) (cinfo : ConstantInfo) :
     MetaM Entries := do
@@ -212,6 +214,7 @@ public def computeImportDiscrTrees (choice : Choice) : CoreM Unit := do
     app := appProm?.isSome
     appAt := appAtProm?.isSome
   }
+  unless choice.any do return
   let (tasks, errors) ← foldEnv {} (Entries.addConst choice) 5000
   let pre : PreDiscrTrees := tasks.foldl (·.append ·.get) {}
   rwProm?.forM (·.resolve pre.rw.toRefinedDiscrTree)
