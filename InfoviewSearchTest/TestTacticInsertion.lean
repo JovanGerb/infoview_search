@@ -3,20 +3,22 @@ module
 public import Lean
 public import InfoviewSearch.Util
 
+meta section
+
 open Lean Elab Command Meta Tactic Server InfoviewSearch
 
-private meta def String.Pos.Raw.toPos (offset : String.Pos.Raw) (s : String) : s.Pos :=
+def String.Pos.Raw.toPos (offset : String.Pos.Raw) (s : String) : s.Pos :=
   if hValid : offset.IsValid s then ⟨offset, hValid⟩ else s.endPos
 
-private meta def String.editText (file newText : String) (range : Lean.Syntax.Range) : String :=
+def String.editText (file newText : String) (range : Lean.Syntax.Range) : String :=
     file.extract file.startPos (range.start.toPos file)
     ++ newText ++
     file.extract (range.stop.toPos file) file.endPos
 
-private meta def String.highlightCursor (file : String) (cursorPos : String.Pos.Raw) : String :=
+def String.highlightCursor (file : String) (cursorPos : String.Pos.Raw) : String :=
   file.editText "∣" ⟨cursorPos, cursorPos⟩
 
-public meta def testTacticInsertionLogic {M} [Monad M] [MonadLiftT IO M]
+public def testTacticInsertionLogic {M} [Monad M] [MonadLiftT IO M]
     [MonadRef M] [MonadLog M] [AddMessageContext M] [MonadOptions M] [MonadQuotation M]
     (fileContents : String) (cursorPos : Lsp.Position) (tactic : M (TSyntax `tactic))
     (tacticInsertionLogic : TSyntax `tactic → PasteInfo → M Lsp.TextEdit)
@@ -55,7 +57,7 @@ public meta def testTacticInsertionLogic {M} [Monad M] [MonadLiftT IO M]
 
 section Test
 
-private def testFile : String :=
+def testFile : String :=
 "import Lean
 
 open Lean Elab Command Meta Tactic
@@ -76,8 +78,8 @@ trace: [TestTacticInsertion] Cursor position
   ⏎
   example : 1 + 1 = 2 := by
     skip
-    skip
-    ∣
+    sk∣ip
+    ⏎
 ---
 trace: [TestTacticInsertion] Edit details
   Range: (6, 6)-(6, 6)
@@ -97,7 +99,9 @@ trace: [TestTacticInsertion] Resulting file contents
 -/
 #guard_msgs in
 #eval testTacticInsertionLogic (M := CoreM)
-    testFile { line := 7, character := 4 } `(tactic| simp)
+    testFile { line := 6, character := 4 } `(tactic| simp)
     createTacticInsertionEdit
+
+
 
 end Test
