@@ -62,6 +62,19 @@ def toHtml (p : Premise) : MetaM Html :=
 
 end Premise
 
+/-- The information required for pasting a suggestion into the editor -/
+structure PasteInfo where
+  /-- The current document -/
+  «meta» : DocumentMeta
+  /-- The range that should be replaced.
+  In tactic mode, this should be the range of the suggestion tactic.
+  In infoview mode, the start and end of the range should both be the cursor position. -/
+  cursorPos : Lsp.Position
+  /-- Whether to use the `on_goal n =>` combinator. -/
+  onGoal : Option Nat
+  /-- The preceding piece of syntax. This is used for merging consecutive `rw` tactics. -/
+  stx : Syntax
+
 section Meta
 
 /-- Determine whether the explicit parts of two expressions are equal,
@@ -144,85 +157,29 @@ def mergeTactics? {m} [Monad m] [MonadRef m] [MonadQuotation m] (stx₁ stx₂ :
   | _, _ => pure ()
   return none
 
-/-- The information required for pasting a suggestion into the editor -/
-structure PasteInfo where
-  /-- The current document -/
-  «meta» : DocumentMeta
-  /-- The range that should be replaced.
-  In tactic mode, this should be the range of the suggestion tactic.
-  In infoview mode, the start and end of the range should both be the cursor position. -/
-  cursorPos : Lsp.Position
-  /-- Whether to use the `on_goal n =>` combinator. -/
-  onGoal : Option Nat
-  /-- The preceding piece of syntax. This is used for merging consecutive `rw` tactics. -/
-  stx : Syntax
-  indent? : Option Nat
-
-def PasteInfo.new («meta» : DocumentMeta) (cursorPos : Lsp.Position) (onGoal : Option Nat)
-    (stx : Syntax)
-    (getStx : String.Pos.Raw → Option Syntax) : CoreM PasteInfo := do
-  let text := «meta».text
-  let indent? :=
-    match stx with
-    | `(term| by $[$tacs:tactic]*) =>
-      let tac := tacs.back!
-      (text.utf8PosToLspPos tac.raw.getPos?.get!).character
-    | _ => match stx with
-    | .atom _ "by" => do
-      if let some goal := getStx (⟨stx.getPos?.get!.byteIdx - 1⟩) then
-        some <| (text.utf8PosToLspPos goal.getPos?.get!).character + 2
-      else
-        some 2
-    | _ =>
-    if stx.getNumArgs == 2 && stx[1].isToken "=>" &&
-      stx[0].getNumArgs == 1 && stx[0][0].getKind == ``Lean.Parser.Tactic.inductionAltLHS then
-      some <| (text.utf8PosToLspPos stx.getPos?.get!).character + 2
-    else if stx.getKind == `Lean.cdotTk then
-      none
-    else
-      some (text.utf8PosToLspPos stx.getPos?.get!).character
-  return { «meta», cursorPos, onGoal, stx, indent? }
-
-
 /-- Given tactic syntax `tac` that we want to paste into the editor, return it as a string.
 This function respects the 100 character limit for long lines. -/
-def tacticPasteString (tac : TSyntax `tactic) (indent : Nat) (onGoal : Option Nat) :
-    CoreM String := do
-  let tac ← if let some n := onGoal then
+def tacticPasteString (tac : TSyntax `tactic) (pasteInfo : PasteInfo) : CoreM String := do
+  let tac ← if let some n := pasteInfo.onGoal then
       `(tactic| on_goal $(mkNatLit (n + 1)) => $(tac):tactic)
     else
       pure tac
-  return (← PrettyPrinter.ppTactic tac).pretty 100 indent indent
+  let column := pasteInfo.cursorPos.character
+  let indent := column
+  return (← PrettyPrinter.ppTactic tac).pretty 100 indent column
 
 /-- Given tactic syntax `tac`, compute the text edit that will paste it into the editor.
 We return the range that should be replaced, and the new text that will replace it. -/
 def mkInsertion (tac : TSyntax `tactic) (pasteInfo : PasteInfo) : CoreM (Lsp.Range × String) := do
-  let { «meta», cursorPos, onGoal, stx, indent? } := pasteInfo
-  let stx := match stx with
-    | `(term| by $[$tacs:tactic]*) => tacs.back!
-    | _ => stx
-  let some range := stx.getRange? |
-    let tactic ← tacticPasteString tac 2 onGoal
-    return (⟨cursorPos, cursorPos⟩, s!"{tactic}\n{String.replicate cursorPos.character ' '}")
-  let text := meta.text
-  let cursorPos := text.lspPosToUtf8Pos cursorPos
-  -- TODO: do something else if the cursor is at the start of the tactic.
-  -- if cursorPos ≤ range.start then
-
-  let endPos := max cursorPos range.stop
-  let extraSpace := range.stop.extract text.source endPos
-  if let some tac ← mergeTactics? stx tac then
-    let replaceRange := text.utf8RangeToLspRange ⟨range.start, endPos⟩
-    let tactic ← tacticPasteString tac replaceRange.start.character onGoal
-    return (replaceRange, tactic ++ extraSpace)
-  let replaceRange := text.utf8RangeToLspRange ⟨range.stop, endPos⟩
-  let tactic ← tacticPasteString tac (indent?.getD replaceRange.start.character) pasteInfo.onGoal
-  let pasteString :=
-    if let some indent := indent? then
-      "\n" ++ String.replicate indent ' ' ++ tactic ++ extraSpace
-    else
-      " " ++ tactic
-  return (replaceRange, pasteString)
+  if let some tac ← mergeTactics? pasteInfo.stx tac then
+    if let some range := pasteInfo.stx.getRange? then
+      let text := pasteInfo.meta.text
+      let endPos := max (text.lspPosToUtf8Pos pasteInfo.cursorPos) range.stop
+      let extraWhitespace := range.stop.extract text.source endPos
+      let tactic ← tacticPasteString tac pasteInfo
+      return (text.utf8RangeToLspRange ⟨range.start, endPos⟩, tactic ++ extraWhitespace)
+  return (⟨pasteInfo.cursorPos, pasteInfo.cursorPos⟩,
+    s!"{← tacticPasteString tac pasteInfo}\n{String.replicate pasteInfo.cursorPos.character ' '}")
 
 end Syntax
 
