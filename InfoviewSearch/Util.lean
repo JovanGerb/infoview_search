@@ -13,6 +13,7 @@ public import Mathlib.Tactic.SimpRw
 public import Mathlib.Tactic.NthRewrite
 public import Mathlib.Tactic.DepRewrite
 public import Batteries.Tactic.PermuteGoals
+public import Mathlib.Data.String.Defs
 
 public meta section
 
@@ -167,32 +168,35 @@ def tacticPasteString (tac : TSyntax `tactic) (pasteInfo : PasteInfo) : CoreM St
   let indent := column
   return (← PrettyPrinter.ppTactic tac).pretty 100 indent column
 
+/-- Given tactic syntax `tac`, compute the text edit that will paste it into the editor.
+We return the range that should be replaced, and the new text that will replace it. -/
+def mkInsertion (tac : TSyntax `tactic) (pasteInfo : PasteInfo) : CoreM (Lsp.Range × String) := do
+  if let some tac ← mergeTactics? pasteInfo.stx tac then
+    if let some range := pasteInfo.stx.getRange? then
+      let text := pasteInfo.meta.text
+      let endPos := max (text.lspPosToUtf8Pos pasteInfo.cursorPos) range.stop
+      let extraWhitespace := range.stop.extract text.source endPos
+      let tactic ← tacticPasteString tac pasteInfo
+      return (text.utf8RangeToLspRange ⟨range.start, endPos⟩, tactic ++ extraWhitespace)
+  return (⟨pasteInfo.cursorPos, pasteInfo.cursorPos⟩,
+    s!"{← tacticPasteString tac pasteInfo}\n{String.replicate pasteInfo.cursorPos.character ' '}")
+
 end Syntax
 
 section Widget
 
 def mkSuggestion (tac : TSyntax `tactic) (pasteInfo : PasteInfo)
     (html : Html) (isText := false) : CoreM Html := do
-  let singleTactic ← tacticPasteString tac pasteInfo
-  let (tactic, replaceRange) ← (do
-    if let some tac ← mergeTactics? pasteInfo.stx tac then
-      if let some range := pasteInfo.stx.getRange? then
-        let text := pasteInfo.meta.text
-        let endPos := max (text.lspPosToUtf8Pos pasteInfo.cursorPos) range.stop
-        let extraWhitespace := range.stop.extract text.source endPos
-        let tactic ← tacticPasteString tac pasteInfo
-        return (tactic ++ extraWhitespace, text.utf8RangeToLspRange ⟨range.start, endPos⟩)
-    return (s!"{singleTactic}\n{String.ofList (.replicate pasteInfo.cursorPos.character ' ')}",
-      ⟨pasteInfo.cursorPos, pasteInfo.cursorPos⟩))
+  let (range, newText) ← mkInsertion tac pasteInfo
   let button :=
     -- TODO: The hover on this button should be a `CodeWithInfos`, instead of a string.
     <span className="font-code"> {
       Html.ofComponent MakeEditLink
-        (.ofReplaceRange pasteInfo.meta replaceRange tactic)
+        (.ofReplaceRange pasteInfo.meta range newText)
         #[<a
           className={"mh2 codicon codicon-insert"}
           style={json% { "position" : "relative", "top" : "0.15em"}}
-          title={singleTactic} />] }
+          title={(← PrettyPrinter.ppTactic tac).pretty} />] }
     </span>;
   let html :=
     if isText then <div style={json% { "margin-top" : "0.15em" }}> {html} </div> else html;
