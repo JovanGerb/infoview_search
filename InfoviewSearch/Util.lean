@@ -14,6 +14,7 @@ public import Mathlib.Tactic.NthRewrite
 public import Mathlib.Tactic.DepRewrite
 public import Batteries.Tactic.PermuteGoals
 public import Mathlib.Data.String.Defs
+public import Mathlib.Data.String.Defs
 
 public meta section
 
