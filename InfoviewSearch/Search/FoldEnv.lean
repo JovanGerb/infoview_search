@@ -5,8 +5,8 @@ Authors: Jovan Gerbscheid
 -/
 module
 
-public import Lean.Meta.CompletionName
 public import Lean.Linter.Deprecated
+public import Lean.Meta.LazyDiscrTree
 
 /-!
 # Looping through the environment efficietly, using paralellism
@@ -38,12 +38,10 @@ def ImportErrorRef.new : BaseIO ImportErrorRef := do
 /-- Return true if `declName` is automatically generated,
 or otherwise unsuitable as a lemma suggestion. -/
 def blacklistInsertion (env : Environment) (declName : Name) : Bool :=
-  declName.isInternalDetail ||
+  LazyDiscrTree.blacklistInsertion env declName ||
   declName.isMetaprogramming ||
-  !allowCompletion env declName ||
   Linter.isDeprecated env declName ||
-  declName == ``sorryAx ||
-  (declName matches .str _ "inj" | .str _ "injEq" | .str _ "sizeOf_spec")
+  match declName with | .str _ s => s == "eq_def" | _ => false
 
 private def MetaContext : Meta.Context where
   keyedConfig := Config.toConfigWithKey { transparency := .reducible }
