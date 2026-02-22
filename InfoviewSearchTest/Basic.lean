@@ -86,7 +86,7 @@ example : ∀ n m : Nat, n + m = m + n := by
   search_test "/0/1" => "rw [Nat.add_comm]\n  "
   exact test_sorry
 
-example {α} [Lattice α] [CommRing α] (f : ℕ → α) (c : α)
+example {α} [Lattice α] [AddGroup α] (f : ℕ → α) (c : α)
     (h : ∀ ε > 0, ∀ n, ∃ N > n, ∀ m ≥ N, |f N - f m| ≤ ε) :
     ∀ ε > 0, ∀ n, ∃ N > n, ∀ m ≥ N, |f N - f m| < ε := by
   intro ε hε n
@@ -94,7 +94,7 @@ example {α} [Lattice α] [CommRing α] (f : ℕ → α) (c : α)
   search_test "/1/1/1/1/1/1" => "grw [← h]\n  "
   exact test_sorry
 
-example {α} [Lattice α] [CommRing α] (f : ℕ → α) (c : α)
+example {α} [Lattice α] [AddGroup α] (f : ℕ → α) (c : α)
     (h : ∀ ε > 0, ∀ n, ∃ N > n, ∀ m ≥ N, |f N - f m| < ε) :
     ∀ ε > 0, ∀ n, ∃ N > n, ∀ m ≥ N, |f N - f m| ≤ ε := by
   intro ε hε n
@@ -156,14 +156,13 @@ lemma Nat.my_inj (n m : Nat) (h : n.succ = m.succ) : n = m := Nat.succ.inj h
 
 -- test which lemmas are and aren't filtered out:
 example (n m : Nat) (h : n.succ = m.succ) : True := by
-  search_test h "" => "rw [Nat.succ_inj] at h\n  " "rw [Nat.succ.injEq] at h\n  "
-  -- TODO: update to lean version v4.28.0, in order to get local private lemmas suggested.
-  search_test h "" => "apply Nat.my_inj at h\n  "
+  search_test h "" =>
+    "rw [Nat.succ_inj] at h\n  " "rw [Nat.succ.injEq] at h\n  " "apply Nat.my_inj at h\n  "
   -- we do not suggest the automatically generated `.inj` lemma,
   -- because the `.injEq` version is stronger.
   fail_if_success
     search_test h "" => "apply Nat.succ.inj at h\n    "
-
+  trivial
 /-
 TODO: add tests for
 
