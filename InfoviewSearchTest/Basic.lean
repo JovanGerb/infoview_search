@@ -54,6 +54,16 @@ example {α} [LinearOrder α] (a b : α) (h : a ≤ b) (h' : b ≤ a) : a ≤ b 
   search_test h "/1" => "grw [h'] at h\n  "
   exact test_sorry
 
+example {α} [LinearOrder α] (a b : α) (h : a < b) (h' : b < a) : a ≤ b := by
+  search_test "/1" => "grw [← h]\n  "
+  search_test "/0/1" => "grw [h]\n  "
+  apply le_of_lt
+  search_test "" => "exact h\n  "
+  search_test "/1" => "grw [← h]\n  "
+  search_test "/0/1" => "grw [h]\n  "
+  search_test h "/1" => "grw [h'] at h\n  "
+  exact h
+
 example (h : m ≡ k [MOD n]) (h' : m ≡ k + 1 [MOD n]) (h'' : m = k + 1) : m ≡ k [MOD n] := by
   search_test "" => "exact h\n  "
   search_test "/1" => "grw [← h]\n  "
@@ -141,6 +151,18 @@ example (a b : Nat) (l : List Nat) (hl : a + b < l.length) (h : l[a + b] = 5) :
     "rw! (occs := .pos [2]) [add_comm b a]\n  "
   rw! (occs := .pos [2])  [Nat.add_comm b a]
   rw [h]
+
+lemma Nat.my_inj (n m : Nat) (h : n.succ = m.succ) : n = m := Nat.succ.inj h
+
+-- test which lemmas are and aren't filtered out:
+example (n m : Nat) (h : n.succ = m.succ) : True := by
+  search_test h "" => "rw [Nat.succ_inj] at h\n  " "rw [Nat.succ.injEq] at h\n  "
+  -- TODO: update to lean version v4.28.0, in order to get local private lemmas suggested.
+  search_test h "" => "apply Nat.my_inj at h\n  "
+  -- we do not suggest the automatically generated `.inj` lemma,
+  -- because the `.injEq` version is stronger.
+  fail_if_success
+    search_test h "" => "apply Nat.succ.inj at h\n    "
 
 /-
 TODO: add tests for
