@@ -82,7 +82,7 @@ def ApplyLemma.generateSuggestion (i : ApplyInfo) (lem : ApplyLemma) :
       explicitGoals := explicitGoals.push (← ppExprTagged mvarId)
   let htmls := if explicitGoals.isEmpty then #[.text "Goal accomplished! 🎉"] else
     explicitGoals.map
-        (<div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={·}/> </div>)
+      (<div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={·}/> </div>)
   let filtered ←
     if !makesNewMVars then
       some <$> mkSuggestion tactic i.pasteInfo (.element "div" #[] htmls) newGoals.isEmpty

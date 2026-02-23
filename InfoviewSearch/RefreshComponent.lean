@@ -173,6 +173,11 @@ def mkRefreshComponent (initial : Html) (k : RefreshToken → m Unit) : m Html :
         </span>
   return <RefreshComponent state={← WithRpcRef.mk token.ref}/>
 
+/-- Lazily render a piece of HTML by running the computation in a separate thread.
+As long as the computation hasn't finished, the result will show up as `initial`. -/
+def mkLazyHtml (k : m (Option Html)) (initial : Html := .text "") : m Html := do
+  mkRefreshComponent initial fun token ↦ do if let some html ← k then token.refresh html
+
 /-- Create a `RefreshComponent`. Explicitly support cancellation by creating a cancel token,
 and setting the previous cancel token. This is useful when the component depends on the selections
 in the goal, so that after making a new selection, the previous computation is cancelled.

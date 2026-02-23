@@ -15,7 +15,7 @@ It is hard to test `#infoview_search` directly, because it emits HTML that the u
 Instead, we define a (scoped) command `search_test {pos} => "{tac}"`, which verifies that
 if you do a `#infoview_search` at position `pos`, `tac` will be one of the suggestions.
 
-TODO: Add way to test preformance.
+TODO: make this command a bit friendlier by trimming the whitespace off of the string
 -/
 
 public meta section
@@ -36,6 +36,7 @@ partial def getHtmlComponentProps {Props} [RpcEncodable Props] (html : Html) (c 
       let props : FilterDetailsProps ← getProps lazy
       arr ← getHtmlComponentProps props.all c arr
     if hash == RefreshComponent.javascriptHash then
+      -- TODO: wait until this component has finished evaluating
       let props : RefreshComponentProps ← getProps lazy
       arr ← getHtmlComponentProps (← props.state.val.get).curr.html c arr
     htmls.foldlM (fun arr html ↦ getHtmlComponentProps html c arr) arr

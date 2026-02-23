@@ -31,6 +31,7 @@ def viewKAbstractSubExpr' {α} (e : Expr) (pos : SubExpr.Pos)
 public def generateSuggestions (loc : SubExpr.GoalsLocation) (pasteInfo : PasteInfo)
     (parentDecl? : Option Name) (token : RefreshToken) : MetaM Unit := do
   let decl ← loc.mvarId.getDecl
+  -- TODO: decide whether we need this name sanitation
   let lctx := decl.lctx |>.sanitizeNames.run' {options := (← getOptions)}
   Meta.withLCtx lctx decl.localInstances do
   let mut result : Array Html := #[]
@@ -43,6 +44,7 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation) (pasteInfo : PasteI
   let rootExpr ← instantiateMVars <| ← match fvarId? with
     | some fvarId => fvarId.getType
     | none => pure decl.type
+  let convPath ← Conv.Path.ofSubExprPosArray rootExpr pos.toArray
   -- TODO: instead of computing the occurrences a single time (i.e. the `n` in `nth_rw n`),
   -- compute the occurrence for each suggestion separately, to avoid inaccuracies.
   viewKAbstractSubExpr' rootExpr pos fun subExpr rwKind ↦ do

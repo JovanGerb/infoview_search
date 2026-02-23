@@ -76,7 +76,6 @@ def ApplyAtLemma.generateSuggestion (lem : ApplyAtLemma) (i : ApplyAtInfo) :
     newGoals := (← newGoals.mapM (abstractMVars ·.1)).push (← abstractMVars replacement)
   }
   let tactic ← tacticSyntax lem i
-  let replacement ← ppExprTagged replacement
   let mut explicitGoals := #[]
   for (goal, bi) in newGoals do
     -- TODO: think more carefully about which goals should be displayed
@@ -84,7 +83,7 @@ def ApplyAtLemma.generateSuggestion (lem : ApplyAtLemma) (i : ApplyAtInfo) :
     -- which we would still want to show as a new goal?
     if bi.isExplicit then
       explicitGoals := explicitGoals.push (← ppExprTagged goal)
-  let mut htmls := #[<InteractiveCode fmt={replacement}/>]
+  let mut htmls := #[<InteractiveCode fmt={← ppExprTagged replacement}/>]
   for newGoal in explicitGoals do
     htmls := htmls.push
       <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={newGoal}/> </div>

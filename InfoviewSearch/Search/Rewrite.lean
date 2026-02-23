@@ -157,7 +157,6 @@ def RwLemma.generateSuggestion (i : RwInfo) (lem : RwLemma) : MetaM (Result RwKe
     replacement := ← abstractMVars replacement
   }
   let tactic ← tacticSyntax lem rwKind i.hyp? proof justLemmaName
-  let replacementString ← ppExprTagged replacement
   let mut explicitGoals := #[]
   for (mvarId, bi) in extraGoals do
     -- TODO: think more carefully about which goals should be displayed
@@ -165,7 +164,7 @@ def RwLemma.generateSuggestion (i : RwInfo) (lem : RwLemma) : MetaM (Result RwKe
     -- which we would still want to show as a new goal?
     if bi.isExplicit then
       explicitGoals := explicitGoals.push (← ppExprTagged mvarId)
-  let mut htmls := #[<InteractiveCode fmt={replacementString}/>]
+  let mut htmls := #[<InteractiveCode fmt={← ppExprTagged replacement}/>]
   for extraGoal in explicitGoals do
     htmls := htmls.push
       <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={extraGoal}/> </div>

@@ -14,6 +14,7 @@ public import Mathlib.Tactic.NthRewrite
 public import Mathlib.Tactic.DepRewrite
 public import Batteries.Tactic.PermuteGoals
 public import Mathlib.Data.String.Defs
+public import InfoviewSearch.Conv
 
 public meta section
 
@@ -185,7 +186,7 @@ end Syntax
 
 section Widget
 
-def mkSuggestion (tac : TSyntax `tactic) (pasteInfo : PasteInfo)
+def mkSingleSuggestion (tac : TSyntax `tactic) (pasteInfo : PasteInfo)
     (html : Html) (isText := false) : CoreM Html := do
   let (range, newText) ← mkInsertion tac pasteInfo
   let button :=
@@ -198,12 +199,15 @@ def mkSuggestion (tac : TSyntax `tactic) (pasteInfo : PasteInfo)
           style={json% { "position" : "relative", "top" : "0.15em"}}
           title={(← PrettyPrinter.ppTactic tac).pretty} />] }
     </span>;
-  let html :=
-    if isText then <div style={json% { "margin-top" : "0.15em" }}> {html} </div> else html;
+  let html := if isText then <div style={json% { "margin-top" : "0.15em" }}> {html} </div> else html
+  return <div> {button} {html} </div>
+
+-- TODO: decide whether this function is needed at all.
+def mkSuggestion (tac : TSyntax `tactic) (pasteInfo : PasteInfo)
+    (html : Html) (isText := false) : CoreM Html := do
   return <li
       style={json% { "display" : "flex", "align-items" : "flex-start", "margin-bottom" : "1em" }}>
-    {button}
-    {html}
+    {← mkSingleSuggestion tac pasteInfo html isText}
   </li>
 
 def mkListElement (htmls : Array Html) (header : Html) (startOpen := true) : Html :=

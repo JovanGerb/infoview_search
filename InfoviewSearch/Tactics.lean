@@ -62,10 +62,9 @@ def renderIntro (loc : SubExpr.GoalsLocation) (pasteInfo : PasteInfo) : MetaM (O
 def renderRfl (loc : SubExpr.GoalsLocation) (pasteInfo : PasteInfo) : MetaM (Option Html) := do
   let .target pos := loc.loc | return none
   unless pos == .root do return none
-  let_expr Eq _ lhs rhs := ← instantiateMVars (← loc.mvarId.getType) | return none
-  unless ← isDefEq lhs rhs do return none
+  try withoutModifyingMCtx loc.mvarId.applyRfl catch _ => return none
   let tactic ← `(tactic| rfl)
-  liftM <| mkSuggestion (isText := true) tactic pasteInfo <| .text "reflexivity"
+  mkSuggestion (isText := true) tactic pasteInfo <| .text "reflexivity"
 
 def renderInduction (loc : SubExpr.GoalLocation) (pasteInfo : PasteInfo) : MetaM (Option Html) := do
   let .hyp fvarId := loc | return none

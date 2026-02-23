@@ -210,7 +210,6 @@ def GrwLemma.generateSuggestion (i : GrwInfo) (lem : GrwLemma) : MetaM (Result G
     replacement := ← abstractMVars replacement
   }
   let tactic ← tacticSyntax lem i proof justLemmaName
-  let replacement ← ppExprTagged replacement
   let mut explicitGoals := #[]
   for (mvarId, bi) in extraGoals do
     -- TODO: think more carefully about which goals should be displayed
@@ -218,7 +217,7 @@ def GrwLemma.generateSuggestion (i : GrwInfo) (lem : GrwLemma) : MetaM (Result G
     -- which we would still want to show as a new goal?
     if bi.isExplicit then
       explicitGoals := explicitGoals.push (← ppExprTagged mvarId)
-  let mut htmls := #[<div> <InteractiveCode fmt={replacement}/> </div>]
+  let mut htmls := #[<div> <InteractiveCode fmt={← ppExprTagged replacement}/> </div>]
   for extraGoal in explicitGoals do
     htmls := htmls.push
       <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={extraGoal}/> </div>

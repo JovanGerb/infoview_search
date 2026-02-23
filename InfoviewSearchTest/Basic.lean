@@ -163,6 +163,12 @@ example (n m : Nat) (h : n.succ = m.succ) : True := by
   fail_if_success
     search_test h "" => "apply Nat.succ.inj at h\n    "
   trivial
+
+-- test the `rfl` and `intro` suggestions
+example {α} (s : Set α) : s ⊆ s := by
+  search_test "" => "intro x h\n  " "rfl\n  "
+  rfl
+
 /-
 TODO: add tests for
 
@@ -171,6 +177,9 @@ TODO: add tests for
 - The `rw` suggestions only show one of the two directions for lemmas that are the same in
   both directions.
 - When it tries to pass arguments explicitly, and this gives an incorrectly located rewrite.
+- Test for deduplication logic:
+  - numerals in different types are considered different.
+  - when instances are different (but defeq), these are considered the same
 
 TODO:
 

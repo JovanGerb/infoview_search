@@ -9,6 +9,20 @@ public import InfoviewSearch
 import all InfoviewSearch.Search.FindCandidates
 import Mathlib
 
+/-!
+
+# Benchmarking
+
+This file tests how long it takes to initialize the discrimination trees used by `#infoview_search`
+
+TODO:
+
+- Test for slowness in the deduplication logic.
+  Currently, results in the same section are compared pairwise to whether they are duplicates.
+  This is potentially expensive when there are hundreds of results in a single section.
+
+-/
+
 public meta section
 
 namespace InfoviewSearch
