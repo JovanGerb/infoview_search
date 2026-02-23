@@ -36,7 +36,6 @@ partial def getHtmlComponentProps {Props} [RpcEncodable Props] (html : Html) (c 
       let props : FilterDetailsProps ← getProps lazy
       arr ← getHtmlComponentProps props.all c arr
     if hash == RefreshComponent.javascriptHash then
-      -- TODO: wait until this component has finished evaluating
       let props : RefreshComponentProps ← getProps lazy
       arr ← getHtmlComponentProps (← props.state.val.get).curr.html c arr
     htmls.foldlM (fun arr html ↦ getHtmlComponentProps html c arr) arr
@@ -65,13 +64,18 @@ scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic
   let text ← getFileMap
   let some cursorPos := (← getRef).getPos? | throwError "found no valid cursor position"
   let cursorPos := text.utf8PosToLspPos cursorPos
-  let pasteInfo := {
-    «meta» := { (default : DocumentMeta) with text }, cursorPos, onGoal := none, stx := default }
-  let token ← RefreshToken.new default
-  generateSuggestions { loc, mvarId } pasteInfo none token
-  let html := (← token.ref.get).curr.html
+  let (_, statusToken) ← mkRefreshComponent
+  let ctx := {
+    cursorPos, statusToken
+    «meta» := { (default : DocumentMeta) with text }
+    onGoal := none
+    stx := default
+    computations := ← IO.mkRef ∅ }
+  let (html, token) ← mkRefreshComponent
+  (generateSuggestions { loc, mvarId } none token).run ctx
+  _ ← statusToken.refreshRef.getLast -- wait until everything is done
   let props ← getHtmlComponentProps html MakeEditLink #[]
-  let suggested := props.flatMap (·.edit.edits.map (·.newText))
+  let suggested := props.flatMap (·.edit.edits.map (·.newText.trimAscii.toString))
   for expected in expecteds do
     unless suggested.contains expected do
       throwError "{expected.quote} is not one of the suggestions: {suggested.map (·.quote)}"

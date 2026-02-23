@@ -7,7 +7,7 @@ module
 
 import Mathlib.Order.Basic
 import Mathlib.Data.Nat.ModEq
-import Mathlib.Data.Set.Basic
+import Mathlib.Data.Set.Insert
 import InfoviewSearchTest.TestTactic
 
 /-!
@@ -22,7 +22,7 @@ set_option linter.privateModule false
 open scoped InfoviewSearch.Test
 
 #infoview_search
-set_option infoview_search.debug true
+-- set_option infoview_search.debug true
 
 axiom test_sorry {α : Sort*} : α
 
@@ -30,60 +30,60 @@ variable (n m k : Nat)
 
 example (h : 0 + n = n) : n = n + 0 := by
   search_test "/1" =>
-    "rw [show n + 0 = n from rfl]\n  "
-    "rw [Nat.add_zero]\n  "
+    "rw [show n + 0 = n from rfl]"
+    "rw [Nat.add_zero]"
   search_test "" =>
-    "rfl\n  "
-    "rw [Nat.left_eq_add]\n  "
-    "refine Nat.dvd_antisymm ?_ ?_\n  "
-  search_test h "" => "apply Nat.le.intro at h\n  " "rw [← Nat.beq_eq] at h\n  "
-  search_test h "/0/1" => "rw [Nat.add_comm] at h\n  "
+    "rfl"
+    "rw [Nat.left_eq_add]"
+    "refine Nat.dvd_antisymm ?_ ?_"
+  search_test h "" => "apply Nat.le.intro at h" "rw [← Nat.beq_eq] at h"
+  search_test h "/0/1" => "rw [Nat.add_comm] at h"
   rfl
 
 example : n - 3 ≤ m - 3 := by
-  search_test "" => "refine Nat.sub_le_sub_right ?_ 3\n  "
+  search_test "" => "refine Nat.sub_le_sub_right ?_ 3"
   exact test_sorry
 
 example {α} [LinearOrder α] (a b : α) (h : a ≤ b) (h' : b ≤ a) : a ≤ b := by
-  search_test "" => "exact h\n  "
-  search_test "/1" => "grw [← h]\n  "
-  search_test "/0/1" => "grw [h]\n  "
+  search_test "" => "exact h"
+  search_test "/1" => "grw [← h]"
+  search_test "/0/1" => "grw [h]"
   apply le_of_lt
-  search_test "/1" => "grw [← h]\n  "
-  search_test "/0/1" => "grw [h]\n  "
-  search_test h "/1" => "grw [h'] at h\n  "
+  search_test "/1" => "grw [← h]"
+  search_test "/0/1" => "grw [h]"
+  search_test h "/1" => "grw [h'] at h"
   exact test_sorry
 
 example {α} [LinearOrder α] (a b : α) (h : a < b) (h' : b < a) : a ≤ b := by
-  search_test "/1" => "grw [← h]\n  "
-  search_test "/0/1" => "grw [h]\n  "
+  search_test "/1" => "grw [← h]"
+  search_test "/0/1" => "grw [h]"
   apply le_of_lt
-  search_test "" => "exact h\n  "
-  search_test "/1" => "grw [← h]\n  "
-  search_test "/0/1" => "grw [h]\n  "
-  search_test h "/1" => "grw [h'] at h\n  "
+  search_test "" => "exact h"
+  search_test "/1" => "grw [← h]"
+  search_test "/0/1" => "grw [h]"
+  search_test h "/1" => "grw [h'] at h"
   exact h
 
 example (h : m ≡ k [MOD n]) (h' : m ≡ k + 1 [MOD n]) (h'' : m = k + 1) : m ≡ k [MOD n] := by
-  search_test "" => "exact h\n  "
-  search_test "/1" => "grw [← h]\n  "
-  search_test h' "/0/1" => "grw [h] at h'\n  "
-  search_test h' "/0/1" => "rw [h''] at h'\n  "
+  search_test "" => "exact h"
+  search_test "/1" => "grw [← h]"
+  search_test h' "/0/1" => "grw [h] at h'"
+  search_test h' "/0/1" => "rw [h''] at h'"
   exact test_sorry
 
 example {p q r : Prop} (h₁ : p → q → r) (h₂ : p → q) (h₃ : p) : r := by
-  search_test h₃ "" => "apply h₂ at h₃\n  "
+  search_test h₃ "" => "apply h₂ at h₃"
   -- TODO: support `apply_rw`:
-  -- search_test h₁ "/1/0" => "apply_rw [← h₂]\n  "
+  -- search_test h₁ "/1/0" => "apply_rw [← h₂]"
   exact test_sorry
 
 -- Test with bound variables:
 example : ∀ n m : Nat, n + m = m + n := by
-  search_test "/1/1/1" => "simp_rw [Nat.add_comm]\n  "
+  search_test "/1/1/1" => "simp_rw [Nat.add_comm]"
   intro n m
   -- The arguments are only inserted when needed:
-  search_test "/1" => "rw [Nat.add_comm m n]\n  "
-  search_test "/0/1" => "rw [Nat.add_comm]\n  "
+  search_test "/1" => "rw [Nat.add_comm m n]"
+  search_test "/0/1" => "rw [Nat.add_comm]"
   exact test_sorry
 
 example {α} [Lattice α] [AddGroup α] (f : ℕ → α) (c : α)
@@ -91,7 +91,7 @@ example {α} [Lattice α] [AddGroup α] (f : ℕ → α) (c : α)
     ∀ ε > 0, ∀ n, ∃ N > n, ∀ m ≥ N, |f N - f m| < ε := by
   intro ε hε n
   obtain ⟨N, hN, h⟩ := h ε hε n
-  search_test "/1/1/1/1/1/1" => "grw [← h]\n  "
+  search_test "/1/1/1/1/1/1" => "grw [← h]"
   exact test_sorry
 
 example {α} [Lattice α] [AddGroup α] (f : ℕ → α) (c : α)
@@ -99,13 +99,13 @@ example {α} [Lattice α] [AddGroup α] (f : ℕ → α) (c : α)
     ∀ ε > 0, ∀ n, ∃ N > n, ∀ m ≥ N, |f N - f m| ≤ ε := by
   intro ε hε n
   obtain ⟨N, hN, h⟩ := h ε hε n
-  search_test "/1/1/1/1/1/1" => "grw [← h]\n  "
+  search_test "/1/1/1/1/1/1" => "grw [← h]"
   exact test_sorry
 
 example (s t : Set α) (h : s ⊆ t) (h' : t ⊂ s) : s ⊆ t ∪ s := by
-  search_test "/0/1" => "nth_grw 1 [h]\n  "
-  search_test "/1/0/1" => "grw [← h]\n  "
-  search_test "" => "intro x h₁\n  "
+  search_test "/0/1" => "nth_grw 1 [h]"
+  search_test "/1/0/1" => "grw [← h]"
+  search_test "" => "intro x h₁"
   exact test_sorry
 
 namespace AntiSymmRelTest
@@ -120,35 +120,35 @@ axiom f : α → α
 axiom f_congr' : a ≤ b → f a ≤ f b
 
 example (h : a ≈ b) (h' : b ≈ c) : f a ≤ f c := by
-  search_test "/0/1/1" => "grw [h]\n  "
+  search_test "/0/1/1" => "grw [h]"
   grw [h]
-  search_test "/0/1/1" => "grw [← h]\n  " "grw [h']\n  "
+  search_test "/0/1/1" => "grw [← h]" "grw [h']"
   grw [h']
 
 end AntiSymmRelTest
 
 -- test for over-applications
 example (f g : Nat → Nat) : (f + g) 2 = f 2 + g 2 := by
-  search_test "/0/1" => "rw [add_comm]\n  "
-  search_test "/0/1/0" => "rw [add_comm]\n  "
+  search_test "/0/1" => "rw [add_comm]"
+  search_test "/0/1/0" => "rw [add_comm]"
   rw [add_comm]
   search_test "/1" =>
-    "rw [Nat.add_comm]\n  "
-    "rw [add_comm (f 2) (g 2)]\n  "
+    "rw [Nat.add_comm]"
+    "rw [add_comm (f 2) (g 2)]"
   exact test_sorry
 
 -- test for motive not type correct issue
 example (a b : Nat) (l : List Nat) (hl : a + b < l.length) (h : l[a + b] = 5) :
     l[b + a] = 5 := by
-  search_test "/0/1/0/1" => "rw! [Nat.add_comm]\n  " "rw! [add_comm]\n  "
+  search_test "/0/1/0/1" => "rw! [Nat.add_comm]" "rw! [add_comm]"
   rw! [Nat.add_comm]
   exact h
 
 example (a b : Nat) (l : List Nat) (hl : a + b < l.length) (h : l[a + b] = 5) :
     b + a + l[b + a] = b + a + 5 := by
   search_test "/0/1/1/0/1" =>
-    "rw! (occs := .pos [2]) [Nat.add_comm b a]\n  "
-    "rw! (occs := .pos [2]) [add_comm b a]\n  "
+    "rw! (occs := .pos [2]) [Nat.add_comm b a]"
+    "rw! (occs := .pos [2]) [add_comm b a]"
   rw! (occs := .pos [2])  [Nat.add_comm b a]
   rw [h]
 
@@ -157,17 +157,48 @@ lemma Nat.my_inj (n m : Nat) (h : n.succ = m.succ) : n = m := Nat.succ.inj h
 -- test which lemmas are and aren't filtered out:
 example (n m : Nat) (h : n.succ = m.succ) : True := by
   search_test h "" =>
-    "rw [Nat.succ_inj] at h\n  " "rw [Nat.succ.injEq] at h\n  " "apply Nat.my_inj at h\n  "
+    "rw [Nat.succ_inj] at h" "rw [Nat.succ.injEq] at h" "apply Nat.my_inj at h"
   -- we do not suggest the automatically generated `.inj` lemma,
   -- because the `.injEq` version is stronger.
   fail_if_success
-    search_test h "" => "apply Nat.succ.inj at h\n    "
+    search_test h "" => "apply Nat.succ.inj at h  "
   trivial
 
 -- test the `rfl` and `intro` suggestions
 example {α} (s : Set α) : s ⊆ s := by
-  search_test "" => "intro x h\n  " "rfl\n  "
+  search_test "" => "intro x h" "rfl"
   rfl
+
+-- test `push` and `push_neg`
+example (a b c : α) (s : Set α) (h : a ∈ insert b s) : True := by
+  search_test h "" => "simp at h" "push _ ∈ _ at h"
+  trivial
+
+-- suggest `+distrib` when it is relevant
+example (p q r : Prop) (h : ¬ (p ∧ q)) (h' : ¬ (p ∨ q)) : True := by
+  search_test h "" => "push_neg at h" "push_neg +distrib at h"
+  search_test h' "" => "push_neg at h'"
+  fail_if_success search_test h' "" => "push_neg +distrib at h'"
+  trivial
+
+-- test `norm_cast` and `push_cast`
+example (a b c : Nat) : (↑(a + b) : Int) * c = ↑(a * c) + (b * c) := by
+  search_test "" => "norm_cast" "push_cast" "dsimp" "ring_nf"
+  push_cast
+  search_test "" =>
+    "ring_nf" "norm_cast"
+    "exact Int.add_mul ↑a ↑b ↑c" "exact add_mul ↑a ↑b ↑c"
+  fail_if_success search_test "" => "push_cast"
+  norm_cast
+  search_test "" =>
+    "ring_nf" "exact Nat.add_mul a b c" "exact add_mul a b c"
+  ring_nf
+
+-- test norm_num
+example : (2 : ℚ) = 1 + 1 := by
+  search_test "" => "norm_num" "norm_cast" "ring_nf"
+  norm_num
+
 
 /-
 TODO: add tests for

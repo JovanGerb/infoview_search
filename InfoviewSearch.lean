@@ -2,6 +2,7 @@ module
 
 public import InfoviewSearch.Search.TryCandidates
 public import InfoviewSearch.Tactics
+public import InfoviewSearch.NormTactics
 public import InfoviewSearch.Unfold
 public meta import Mathlib.Lean.Meta.KAbstractPositions
 
@@ -14,51 +15,68 @@ open Lean Meta Server Widget ProofWidgets Jsx
 
 open RefreshComponent
 
-def render (parts : Array Html) : Html :=
-  if parts.isEmpty then
-    .text "infoview_search found no suggestions"
-  else
-    .element "div" #[] parts
-
-def viewKAbstractSubExpr' {α} (e : Expr) (pos : SubExpr.Pos)
-    (k : Expr → RwKind → MetaM α) : MetaM α := do
+def viewKAbstractSubExpr' {m α}
+    [Monad m] [MonadLiftT MetaM m] [MonadControlT MetaM m] [MonadError m]
+    (e : Expr) (pos : SubExpr.Pos) (k : Expr → RwKind → m α) : m α := do
   if let some (subExpr, occ) ← withReducible <| viewKAbstractSubExpr e pos then
     let tpCorrect ← kabstractIsTypeCorrect e subExpr pos
     k subExpr (.valid tpCorrect occ)
   else
     Meta.viewSubexpr (fun _ e ↦ k e .hasBVars) pos e
 
-public def generateSuggestions (loc : SubExpr.GoalsLocation) (pasteInfo : PasteInfo)
-    (parentDecl? : Option Name) (token : RefreshToken) : MetaM Unit := do
+def mkElabContextInfo : MetaM Elab.ContextInfo :=
+  return {
+    env           := (← getEnv)
+    mctx          := (← getMCtx)
+    options       := (← getOptions)
+    currNamespace := (← getCurrNamespace)
+    openDecls     := (← getOpenDecls)
+    fileMap       := default
+    ngen          := (← getNGen)
+  }
+
+set_option linter.style.emptyLine false
+
+public def generateSuggestions (loc : SubExpr.GoalsLocation)
+    (parentDecl? : Option Name) (token : RefreshToken) : InfoviewSearchM Unit := do
   let decl ← loc.mvarId.getDecl
   -- TODO: decide whether we need this name sanitation
   let lctx := decl.lctx |>.sanitizeNames.run' {options := (← getOptions)}
   Meta.withLCtx lctx decl.localInstances do
-  let mut result : Array Html := #[]
-  if let some html ← renderTactic loc pasteInfo then
-    result := result.push html
+  let mut htmls : Array Html := #[]
+  if let some html ← renderTactic loc then
+    htmls := htmls.push html
   let (fvarId?, pos) ← match loc.loc with
     | .hypType fvarId pos  => pure (some fvarId, pos)
     | .target pos => pure (none, pos)
-    | _ => token.refresh (render result); return
+    | _ => token.refresh (.element "div" #[] htmls); return
   let rootExpr ← instantiateMVars <| ← match fvarId? with
     | some fvarId => fvarId.getType
     | none => pure decl.type
-  let convPath ← Conv.Path.ofSubExprPosArray rootExpr pos.toArray
   -- TODO: instead of computing the occurrences a single time (i.e. the `n` in `nth_rw n`),
   -- compute the occurrence for each suggestion separately, to avoid inaccuracies.
   viewKAbstractSubExpr' rootExpr pos fun subExpr rwKind ↦ do
   let hyp? ← fvarId?.mapM (·.getUserName)
-  let mut result := result
-  if let some html ← InteractiveUnfold.renderUnfolds subExpr rwKind hyp? pasteInfo then
-    result := result.push html
-  let token' ← RefreshToken.new <| .text "searching for applicable lemmas"
-  result := result.push <| <RefreshComponent state={← WithRpcRef.mk token'.ref}/>
-  token.refresh (render result)
-  do
-    let ppSubExpr ← Widget.ppExprTagged subExpr
-    let state ← initializeWidgetState rootExpr subExpr pos pasteInfo rwKind fvarId? parentDecl?
-    state.repeatRefresh ppSubExpr token'
+  let mut htmls := htmls
+  let convPath? ←
+    if pos.isRoot then pure none else some <$> Conv.Path.ofSubExprPosArray rootExpr pos.toArray
+  let rewritingInfo := { hyp?, convPath?, ctx := ← mkElabContextInfo }
+
+  -- Presumably we should think better about which order to put these suggestions in.
+  htmls := htmls.push (← suggestPush subExpr rewritingInfo)
+  htmls := htmls.push (← suggestSimp subExpr rewritingInfo)
+  htmls := htmls.push (← suggestNormCast subExpr rewritingInfo)
+  htmls := htmls.push (← suggestAlgebraicNormalization subExpr rewritingInfo)
+  if let some html ← InteractiveUnfold.renderUnfolds subExpr rwKind hyp? then
+    htmls := htmls.push html
+
+  let (searchHtml, token') ← mkRefreshComponent <| .text "searching for applicable lemmas"
+  htmls := htmls.push searchHtml
+  token.refresh (.element "div" #[] htmls)
+
+  let ppSubExpr ← Widget.ppExprTagged subExpr
+  let state ← initializeWidgetState rootExpr subExpr pos rwKind fvarId? parentDecl?
+  state.repeatRefresh ppSubExpr token'
 
 @[server_rpc_method]
 public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
@@ -78,10 +96,23 @@ public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
       let goals := if useAfter then tacticInfo.goalsAfter else tacticInfo.goalsBefore
       goals.contains loc.mvarId
     | return .text "infoview_search: Please reload the tactic state"
-  let pasteInfo : PasteInfo := { «meta» := doc.meta, cursorPos := props.pos, onGoal, stx }
-  goal.ctx.val.runMetaM {} do
-  mkCancelRefreshComponent props.cancelTkRef.val (.text "searching for suggestions..") <|
-    generateSuggestions loc pasteInfo parentDecl?
+  let (statusHtml, statusToken) ← mkRefreshComponent
+  let ctx := {
+    onGoal, stx, statusToken
+    «meta» := doc.meta
+    cursorPos := props.pos
+    computations := ← IO.mkRef ∅
+    }
+  let result ←  goal.ctx.val.runMetaM {} do
+    (mkCancelRefreshComponent props.cancelTkRef.val (.text "searching for suggestions..") <|
+      generateSuggestions loc parentDecl?).run ctx
+  return <details «open»={true}>
+    <summary className="mv2 pointer">
+      infoview_search suggestions: {statusHtml}
+    </summary>
+    {result}
+  </details>
+
 
 /-- The component called by the `#infoview_search` command. -/
 @[widget_module]

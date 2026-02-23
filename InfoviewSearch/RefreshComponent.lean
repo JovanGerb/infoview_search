@@ -5,7 +5,6 @@ Authors: Jovan Gerbscheid
 -/
 module
 
-public import InfoviewSearch.Util
 public import ProofWidgets.Component.Panel.Basic
 public import ProofWidgets.Data.Html
 
@@ -107,6 +106,13 @@ or because a different expression was selected in the goal.
 def getCurrState (ref : WithRpcRef RefreshRef) : RequestM (RequestTask VersionedHtml) := do
   return .pure (← ref.val.get).curr
 
+/-- Wait until the refreshing computation has finished, and then return the final HTML. -/
+partial def RefreshRef.getLast (ref : RefreshRef) : BaseIO Html := do
+  let s ← ref.get
+  if s.next.get.isNone then
+    return s.curr.html
+  ref.getLast
+
 end RefreshComponent
 
 open RefreshComponent
@@ -117,7 +123,6 @@ structure RefreshComponentProps where
   state : WithRpcRef RefreshRef
   deriving RpcEncodable
 
-set_option linter.style.longLine false in
 /-- Display an inital HTML, and repeatedly update the display with new HTML objects
 as they appear in `state`. A dedicated thread should be spawned in order to modify `state`. -/
 @[widget_module]
@@ -131,17 +136,17 @@ def RefreshComponent : Component RefreshComponentProps where
 using `RefreshToken.refresh`. -/
 structure RefreshToken where
   /-- The reference that was given to the corresponding `RefreshComponent`. -/
-  ref : RefreshRef
+  refreshRef : RefreshRef
   /-- The promise that will resolve the `next` field in `ref`.
   If we drop the reference to this structure, and hence to this promise,
   the `next` field will resolve to `none`. -/
-  promise : IO.Ref (IO.Promise VersionedHtml)
+  private promise : IO.Ref (IO.Promise VersionedHtml)
 
 /-- Create a fresh `RefreshToken` with initial HTML `initial`. -/
-def RefreshToken.new (initial : Html) : BaseIO RefreshToken := do
+private def RefreshToken.new (initial : Html := .text "") : BaseIO RefreshToken := do
   let promise ← IO.Promise.new
   return {
-    ref := ← IO.mkRef { curr := { html := initial, idx := 0 }, next := promise.result? }
+    refreshRef := ← IO.mkRef { curr := { html := initial, idx := 0 }, next := promise.result? }
     promise := ← IO.mkRef promise }
 
 /-- Update the current HTML to be `html`.
@@ -149,19 +154,54 @@ This function makes use of `ST.Ref.take` in order to be thread safe.
 That is, if multiple different threads call `RefreshToken.refresh` with the same refresh token,
 a call will block other calls until it is finished. -/
 def RefreshToken.refresh (token : RefreshToken) (html : Html) : BaseIO Unit := unsafe do
-  let { ref, promise } := token
-  let idx := (← ref.take).curr.idx + 1
+  let { refreshRef, promise } := token
+  let idx := (← refreshRef.take).curr.idx + 1
   (← promise.get).resolve { html, idx }
   let newPromise ← IO.Promise.new
   promise.set newPromise
-  ref.set { curr := { html, idx }, next := newPromise.result? }
+  refreshRef.set { curr := { html, idx }, next := newPromise.result? }
+
+/-- Create an HTML, together with a `RefreshToken` that can be used to update this HTML. -/
+def mkRefreshComponent (initial : Html := .text "") : BaseIO (Html × RefreshToken) := do
+  let token ← RefreshToken.new initial
+  return (<RefreshComponent state={← WithRpcRef.mk token.refreshRef}/>, token)
+
+section MonadDrop
+
+/--
+The class `MonadDrop m n` allows a computation in monad `m` to be run in monad `n`.
+For example, a `MetaM` computation can be ran in `EIO Exception`,
+which can then be ran as a task using `EIO.asTask`.
+-/
+class MonadDrop (m : Type → Type) (n : outParam <| Type → Type) where
+  /-- Translates an action from monad `m` into monad `n`. -/
+  dropM {α} : m α → m (n α)
+
+export MonadDrop (dropM)
+
+variable {m n : Type → Type} [Monad m] [MonadDrop m n]
+
+instance : MonadDrop m m where
+  dropM := pure
+
+instance {ρ} : MonadDrop (ReaderT ρ m) n where
+  dropM act := fun ctx => dropM (act ctx)
+
+instance {σ} : MonadDrop (StateT σ m) n where
+  dropM act := do liftM <| dropM <| act.run' (← get)
+
+instance {ω σ} [MonadLiftT (ST ω) m] : MonadDrop (StateRefT' ω σ m) n where
+  dropM act := do liftM <| dropM <| act.run' (← get)
+
+end MonadDrop
 
 variable {m} [Monad m] [MonadDrop m (EIO Exception)] [MonadLiftT BaseIO m]
 
-/-- Create a `RefreshComponent`. In order to implicitly support cancellation, `m` should extend
-`CoreM`, and hence have access to a cancel token. -/
-def mkRefreshComponent (initial : Html) (k : RefreshToken → m Unit) : m Html := do
-  let token ← RefreshToken.new initial
+/-- Create a `RefreshComponent` using the computation `k`.
+In order to implicitly support cancellation, `m` should extend `CoreM`,
+and hence have access to a cancel token. -/
+def mkRefreshComponentM (initial : Html) (k : RefreshToken → m Unit) : m Html := do
+  let (html, token) ← mkRefreshComponent initial
   discard <| BaseIO.asTask (prio := .dedicated) <|
     (← dropM <| k token).catchExceptions fun ex => token.refresh =<< do
       if let .internal id _ := ex then
@@ -171,12 +211,12 @@ def mkRefreshComponent (initial : Html) (k : RefreshToken → m Unit) : m Html :
           An error occurred while refreshing this component:
           <InteractiveMessage msg={← WithRpcRef.mk ex.toMessageData}/>
         </span>
-  return <RefreshComponent state={← WithRpcRef.mk token.ref}/>
+  return html
 
 /-- Lazily render a piece of HTML by running the computation in a separate thread.
 As long as the computation hasn't finished, the result will show up as `initial`. -/
 def mkLazyHtml (k : m (Option Html)) (initial : Html := .text "") : m Html := do
-  mkRefreshComponent initial fun token ↦ do if let some html ← k then token.refresh html
+  mkRefreshComponentM initial (do if let some html ← k then ·.refresh html)
 
 /-- Create a `RefreshComponent`. Explicitly support cancellation by creating a cancel token,
 and setting the previous cancel token. This is useful when the component depends on the selections
@@ -190,8 +230,8 @@ def mkCancelRefreshComponent [MonadWithReaderOf Core.Context m]
   let cancelTk ← IO.CancelToken.new
   let oldTk ← (cancelTkRef.swap cancelTk : BaseIO _)
   oldTk.set
-  mkRefreshComponent initial fun token ↦
-    withTheReader Core.Context ({· with cancelTk? := cancelTk }) <| k token
+  withTheReader Core.Context ({· with cancelTk? := cancelTk }) <|
+    mkRefreshComponentM initial k
 
 abbrev CancelTokenRef := IO.Ref IO.CancelToken
 

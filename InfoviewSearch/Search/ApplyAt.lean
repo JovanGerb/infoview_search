@@ -17,7 +17,6 @@ structure ApplyAtLemma where
   name : Premise
 
 structure ApplyAtInfo where
-  pasteInfo : PasteInfo
   target : Expr
   hyp : Name
 
@@ -50,7 +49,7 @@ private def tacticSyntax (lem : ApplyAtLemma) (i : ApplyAtInfo) : MetaM (TSyntax
 set_option linter.style.emptyLine false in
 /-- Generate a suggestion for applying `lem`. -/
 def ApplyAtLemma.generateSuggestion (lem : ApplyAtLemma) (i : ApplyAtInfo) :
-    MetaM (Result ApplyAtKey) :=
+    InfoviewSearchM (Result ApplyAtKey) :=
   withReducible do withNewMCtxDepth do
   let (_proof, mvars, binderInfos, replacement) ← lem.name.forallMetaTelescopeReducing
   let e ← inferType mvars.back!
@@ -89,11 +88,11 @@ def ApplyAtLemma.generateSuggestion (lem : ApplyAtLemma) (i : ApplyAtInfo) :
       <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={newGoal}/> </div>
   let filtered ←
     if !makesNewMVars then
-      some <$> mkSuggestion tactic i.pasteInfo (.element "div" #[] htmls)
+      some <$> mkSuggestion tactic (.element "div" #[] htmls)
     else
       pure none
   htmls := htmls.push (<div> {← lem.name.toHtml} </div>)
-  let unfiltered ← mkSuggestion tactic i.pasteInfo (.element "div" #[] htmls)
+  let unfiltered ← mkSuggestion tactic (.element "div" #[] htmls)
   let pattern ← forallTelescopeReducing (← lem.name.getType) fun xs _ => do
     ppExprTagged (← inferType xs.back!)
   return { filtered, unfiltered, key, pattern }

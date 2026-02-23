@@ -16,7 +16,6 @@ structure ApplyLemma where
   name : Premise
 
 structure ApplyInfo where
-  pasteInfo : PasteInfo
   target : Expr
 
 structure ApplyKey where
@@ -51,7 +50,7 @@ private def tacticSyntax (proof : Expr) (useExact : Bool) : MetaM (TSyntax `tact
 set_option linter.style.emptyLine false in
 /-- Generate a suggestion for applying `lem`. -/
 def ApplyLemma.generateSuggestion (i : ApplyInfo) (lem : ApplyLemma) :
-    MetaM (Result ApplyKey) :=
+    InfoviewSearchM (Result ApplyKey) :=
   withReducible do withNewMCtxDepth do
   let (proof, mvars, binderInfos, e) ← lem.name.forallMetaTelescopeReducing
   unless ← isDefEq e i.target do throwError "{e} does not unify with {i.target}"
@@ -85,11 +84,11 @@ def ApplyLemma.generateSuggestion (i : ApplyInfo) (lem : ApplyLemma) :
       (<div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={·}/> </div>)
   let filtered ←
     if !makesNewMVars then
-      some <$> mkSuggestion tactic i.pasteInfo (.element "div" #[] htmls) newGoals.isEmpty
+      some <$> mkSuggestion tactic (.element "div" #[] htmls) newGoals.isEmpty
     else
       pure none
   let htmls := htmls.push (<div> {← lem.name.toHtml} </div>)
-  let unfiltered ← mkSuggestion tactic i.pasteInfo (.element "div" #[] htmls) newGoals.isEmpty
+  let unfiltered ← mkSuggestion tactic (.element "div" #[] htmls) newGoals.isEmpty
   let pattern ← forallTelescope (← lem.name.getType) fun _ e => ppExprTagged e
   return { filtered, unfiltered, key, pattern }
 

@@ -69,7 +69,6 @@ structure RwLemma where
   symm : Bool
 
 structure RwInfo where
-  pasteInfo : PasteInfo
   rootExpr : Expr
   subExpr : Expr
   pos : SubExpr.Pos
@@ -111,7 +110,7 @@ private def tacticSyntax (lem : RwLemma) (rwKind : RwKind) (hyp? : Option Name) 
 
 set_option linter.style.emptyLine false in
 
-def RwLemma.generateSuggestion (i : RwInfo) (lem : RwLemma) : MetaM (Result RwKey) :=
+def RwLemma.generateSuggestion (i : RwInfo) (lem : RwLemma) : InfoviewSearchM (Result RwKey) :=
   withReducible do withNewMCtxDepth do
   let e := i.subExpr
   let (proof, mvars, binderInfos, eqn) ← lem.name.forallMetaTelescopeReducing
@@ -170,11 +169,11 @@ def RwLemma.generateSuggestion (i : RwInfo) (lem : RwLemma) : MetaM (Result RwKe
       <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={extraGoal}/> </div>
   let filtered ←
     if !isRefl && !makesNewMVars then
-      some <$> mkSuggestion tactic i.pasteInfo (.element "div" #[] htmls)
+      some <$> mkSuggestion tactic (.element "div" #[] htmls)
     else
       pure none
   htmls := htmls.push (<div> {← lem.name.toHtml} </div>)
-  let unfiltered ← mkSuggestion tactic i.pasteInfo (.element "div" #[] htmls)
+  let unfiltered ← mkSuggestion tactic (.element "div" #[] htmls)
   let pattern ← forallTelescopeReducing (← lem.name.getType) fun _ e => do
     let mkApp2 _ lhs rhs ← whnf e | throwError "Expected equation, not{indentExpr e}"
     ppExprTagged <| if lem.symm then rhs else lhs

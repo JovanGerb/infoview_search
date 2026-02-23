@@ -33,7 +33,7 @@ of sections of candidates, where each section corresponds to one kind of match w
 discrimination tree. -/
 @[inline]
 def getCandidatesAux (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (gpos : Array GrwPos)
-    (rwKind : RwKind) (hyp? : Option Name) (pasteInfo : PasteInfo)
+    (rwKind : RwKind) (hyp? : Option Name)
     (rw : Expr → MetaM (MatchResult RwLemma)) (grw : Expr → MetaM (MatchResult GrwLemma))
     (app : Expr → MetaM (MatchResult ApplyLemma)) (appAt : Expr → MetaM (MatchResult ApplyAtLemma))
     : MetaM (Array Candidates) := do
@@ -43,7 +43,7 @@ def getCandidatesAux (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (gpos : Array
   We choose the order `grw` => `rw` => `apply(at)`. -/
   if !gpos.isEmpty then
     cands := cands ++ (← grw subExpr).elts.map fun _ ↦ (·.map <|
-      .grw { pasteInfo, rootExpr, subExpr, pos, hyp?, rwKind, gpos })
+      .grw { rootExpr, subExpr, pos, hyp?, rwKind, gpos })
   let mut rwExpr := subExpr
   let mut rwPos := pos
   repeat
@@ -51,7 +51,7 @@ def getCandidatesAux (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (gpos : Array
     certainly possible that the correct `rwKind` is not the same for all of these.
     Though this edge case is probably very rare. -/
     cands := cands ++ (← rw rwExpr).elts.map fun _ ↦ (·.map (.rw <|
-      { pasteInfo, rootExpr, subExpr := rwExpr, pos := rwPos, hyp?, rwKind }))
+      { rootExpr, subExpr := rwExpr, pos := rwPos, hyp?, rwKind }))
     match rwExpr with
     | .app f _ =>
       rwExpr := f
@@ -60,22 +60,22 @@ def getCandidatesAux (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (gpos : Array
   if pos == .root then
     if let some hyp := hyp? then
       cands := cands ++ (← appAt rootExpr).elts.map fun _ ↦ (·.map (.appAt <|
-        { pasteInfo, target := rootExpr, hyp }))
+        { target := rootExpr, hyp }))
     else
       cands := cands ++ (← app rootExpr).elts.map fun _ ↦ (·.map (.app <|
-        { pasteInfo, target := rootExpr }))
+        { target := rootExpr }))
   return cands.foldr (init := #[]) fun _ val acc ↦ acc ++ val
 
 def getImportCandidates (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (gpos : Array GrwPos)
-    (rwKind : RwKind) (hyp? : Option Name) (pasteInfo : PasteInfo) : MetaM (Array Candidates) :=
-  getCandidatesAux rootExpr subExpr pos gpos rwKind hyp? pasteInfo
+    (rwKind : RwKind) (hyp? : Option Name) : MetaM (Array Candidates) :=
+  getCandidatesAux rootExpr subExpr pos gpos rwKind hyp?
     (getImportMatches rwRef) (getImportMatches grwRef)
     (getImportMatches appRef) (getImportMatches appAtRef)
 
 def getCandidates (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (gpos : Array GrwPos)
-    (rwKind : RwKind) (hyp? : Option Name) (pasteInfo : PasteInfo) (pres : PreDiscrTrees) :
+    (rwKind : RwKind) (hyp? : Option Name) (pres : PreDiscrTrees) :
     MetaM (Array Candidates) :=
-  getCandidatesAux rootExpr subExpr pos gpos rwKind hyp? pasteInfo
+  getCandidatesAux rootExpr subExpr pos gpos rwKind hyp?
     (getMatches pres.rw.toRefinedDiscrTree) (getMatches pres.grw.toRefinedDiscrTree)
     (getMatches pres.app.toRefinedDiscrTree) (getMatches pres.appAt.toRefinedDiscrTree)
 
@@ -87,7 +87,8 @@ register_option infoview_search.debug : Bool := {
 
 /-- Spawn a task that computes a piece of `Html` to be displayed when finished. -/
 @[specialize]
-def spawnTask {α} (premise : Premise) (k : MetaM α) : MetaM <| Task (Except Html (Option α)) := do
+def spawnTask {α} (premise : Premise) (k : InfoviewSearchM α) :
+    InfoviewSearchM <| Task (Except Html (Option α)) := do
   let premiseHtml ← premise.toHtml
   let act ← dropM do
     /- Since this task may have been on the queue for a while,
@@ -125,7 +126,7 @@ def SectionsState.isFinished : SectionsState → Bool
 def SectionsState.hasProgressed : SectionsState → BaseIO Bool
   | .rw s | .grw s | .app s | .appAt s => s.pending.anyM IO.hasFinished
 
-def Candidates.generateSuggestions (source : Source) : Candidates → MetaM SectionsState
+def Candidates.generateSuggestions (source : Source) : Candidates → InfoviewSearchM SectionsState
   | .rw i arr => .rw <$>
     .new source <$> arr.mapM fun lem ↦ spawnTask lem.name <| lem.generateSuggestion i
   | .grw i arr => .grw <$>
@@ -149,9 +150,8 @@ public structure WidgetState where
 
 set_option linter.style.emptyLine false in
 public def initializeWidgetState (rootExpr subExpr : Expr) (pos : SubExpr.Pos)
-    (pasteInfo : PasteInfo) (rwKind : RwKind) (fvarId? : Option FVarId)
-    (parentDecl? : Option Name) :
-    MetaM WidgetState := do
+    (rwKind : RwKind) (fvarId? : Option FVarId) (parentDecl? : Option Name) :
+    InfoviewSearchM WidgetState := do
   Core.checkSystem "infoview_search"
   let mut sections := #[]
 
@@ -165,18 +165,18 @@ public def initializeWidgetState (rootExpr subExpr : Expr) (pos : SubExpr.Pos)
   let pres ← computeLCtxDiscrTrees choice fvarId?
   let hyp? ← fvarId?.mapM (·.getUserName)
   Core.checkSystem "infoview_search"
-  for cand in ← getCandidates rootExpr subExpr pos gpos rwKind hyp? pasteInfo pres do
+  for cand in ← getCandidates rootExpr subExpr pos gpos rwKind hyp? pres do
     sections := sections.push (← cand.generateSuggestions .hypothesis)
 
   let pres ← computeModuleDiscrTrees choice parentDecl?
   Core.checkSystem "infoview_search"
-  for cand in ← getCandidates rootExpr subExpr pos gpos rwKind hyp? pasteInfo pres do
+  for cand in ← getCandidates rootExpr subExpr pos gpos rwKind hyp? pres do
     sections := sections.push (← cand.generateSuggestions .fromFile)
 
   Core.checkSystem "infoview_search"
-  let importTask? := some <| ← EIO.asTask <| ← dropM (m := MetaM) do
+  let importTask? := some <| ← EIO.asTask <| ← dropM do
     computeImportDiscrTrees choice
-    let cands ← getImportCandidates rootExpr subExpr pos gpos rwKind hyp? pasteInfo
+    let cands ← getImportCandidates rootExpr subExpr pos gpos rwKind hyp?
     cands.mapM (·.generateSuggestions .fromImport)
 
   return { sections, importTask?, header :=

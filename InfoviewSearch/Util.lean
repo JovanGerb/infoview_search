@@ -6,8 +6,6 @@ Authors: Jovan Gerbscheid
 module
 
 public import ProofWidgets.Component.MakeEditLink
-public import ProofWidgets.Component.OfRpcMethod
-public import ProofWidgets.Data.Html
 public import Mathlib.Tactic.GRewrite
 public import Mathlib.Tactic.SimpRw
 public import Mathlib.Tactic.NthRewrite
@@ -15,6 +13,7 @@ public import Mathlib.Tactic.DepRewrite
 public import Batteries.Tactic.PermuteGoals
 public import Mathlib.Data.String.Defs
 public import InfoviewSearch.Conv
+public import InfoviewSearch.RefreshComponent
 
 public meta section
 
@@ -64,7 +63,7 @@ def toHtml (p : Premise) : MetaM Html :=
 end Premise
 
 /-- The information required for pasting a suggestion into the editor -/
-structure PasteInfo where
+structure Context where
   /-- The current document -/
   «meta» : DocumentMeta
   /-- The range that should be replaced.
@@ -75,6 +74,31 @@ structure PasteInfo where
   onGoal : Option Nat
   /-- The preceding piece of syntax. This is used for merging consecutive `rw` tactics. -/
   stx : Syntax
+  /-- The ongoing computations. This is used to inform the user. -/
+  computations : IO.Ref (Std.TreeSet String)
+  /-- The token for updating the HTML that represents the state of the ongoing computations. -/
+  statusToken : RefreshToken
+
+abbrev InfoviewSearchM := ReaderT Context MetaM
+
+private def rerenderStatus : InfoviewSearchM Unit := do
+  let computations ← (← read).computations.get
+  (← read).statusToken.refresh <|
+    if computations.isEmpty then
+      .text ""
+    else
+      -- TODO: use a fancier throbber instead of `⏳`?
+      let title := "ongoing searches: " ++ String.intercalate ", " computations.toList;
+      <span title={title}> {.text "⏳"} </span>
+
+def asComputation {α} (name : String) (k : InfoviewSearchM α) : InfoviewSearchM α := do
+  (← read).computations.modify (·.insert name)
+  rerenderStatus
+  try k
+  finally
+    (← read).computations.modify (·.erase name)
+    rerenderStatus
+
 
 section Meta
 
@@ -160,54 +184,57 @@ def mergeTactics? {m} [Monad m] [MonadRef m] [MonadQuotation m] (stx₁ stx₂ :
 
 /-- Given tactic syntax `tac` that we want to paste into the editor, return it as a string.
 This function respects the 100 character limit for long lines. -/
-def tacticPasteString (tac : TSyntax `tactic) (pasteInfo : PasteInfo) : CoreM String := do
-  let tac ← if let some n := pasteInfo.onGoal then
+def tacticPasteString (tac : TSyntax `tactic) : InfoviewSearchM String := do
+  let tac ← if let some n := (← read).onGoal then
       `(tactic| on_goal $(mkNatLit (n + 1)) => $(tac):tactic)
     else
       pure tac
-  let column := pasteInfo.cursorPos.character
+  let column := (← read).cursorPos.character
   let indent := column
   return (← PrettyPrinter.ppTactic tac).pretty 100 indent column
 
 /-- Given tactic syntax `tac`, compute the text edit that will paste it into the editor.
 We return the range that should be replaced, and the new text that will replace it. -/
-def mkInsertion (tac : TSyntax `tactic) (pasteInfo : PasteInfo) : CoreM (Lsp.Range × String) := do
-  if let some tac ← mergeTactics? pasteInfo.stx tac then
-    if let some range := pasteInfo.stx.getRange? then
-      let text := pasteInfo.meta.text
-      let endPos := max (text.lspPosToUtf8Pos pasteInfo.cursorPos) range.stop
+def mkInsertion (tac : TSyntax `tactic) : InfoviewSearchM (Lsp.Range × String) := do
+  if let some tac ← mergeTactics? (← read).stx tac then
+    if let some range := (← read).stx.getRange? then
+      let text := (← read).meta.text
+      let endPos := max (text.lspPosToUtf8Pos (← read).cursorPos) range.stop
       let extraWhitespace := range.stop.extract text.source endPos
-      let tactic ← tacticPasteString tac pasteInfo
+      let tactic ← tacticPasteString tac (← read)
       return (text.utf8RangeToLspRange ⟨range.start, endPos⟩, tactic ++ extraWhitespace)
-  return (⟨pasteInfo.cursorPos, pasteInfo.cursorPos⟩,
-    s!"{← tacticPasteString tac pasteInfo}\n{String.replicate pasteInfo.cursorPos.character ' '}")
+  return (⟨(← read).cursorPos, (← read).cursorPos⟩,
+    s!"{← tacticPasteString tac (← read)}\n{String.replicate (← read).cursorPos.character ' '}")
 
 end Syntax
 
 section Widget
 
-def mkSingleSuggestion (tac : TSyntax `tactic) (pasteInfo : PasteInfo)
-    (html : Html) (isText := false) : CoreM Html := do
-  let (range, newText) ← mkInsertion tac pasteInfo
+def mkSingleSuggestion (tac : TSyntax `tactic) (html : Html) (isText := false) :
+    InfoviewSearchM Html := do
+  let (range, newText) ← mkInsertion tac (← read)
   let button :=
     -- TODO: The hover on this button should be a `CodeWithInfos`, instead of a string.
     <span className="font-code"> {
       Html.ofComponent MakeEditLink
-        (.ofReplaceRange pasteInfo.meta range newText)
+        (.ofReplaceRange (← read).meta range newText)
         #[<a
           className={"mh2 codicon codicon-insert"}
           style={json% { "position" : "relative", "top" : "0.15em"}}
           title={(← PrettyPrinter.ppTactic tac).pretty} />] }
     </span>;
-  let html := if isText then <div style={json% { "margin-top" : "0.15em" }}> {html} </div> else html
-  return <div> {button} {html} </div>
+  let html := if isText then <span style={json% { "margin-top" : "0.15em" }}> {html} </span>
+    else html
+  return <div display="flex"
+    style={json% { "display" : "flex", "align-items" : "flex-start", "margin-bottom" : "1em" }}>
+    {button} {html}
+    </div>
 
 -- TODO: decide whether this function is needed at all.
-def mkSuggestion (tac : TSyntax `tactic) (pasteInfo : PasteInfo)
-    (html : Html) (isText := false) : CoreM Html := do
-  return <li
-      style={json% { "display" : "flex", "align-items" : "flex-start", "margin-bottom" : "1em" }}>
-    {← mkSingleSuggestion tac pasteInfo html isText}
+def mkSuggestion (tac : TSyntax `tactic) (html : Html) (isText := false) :
+    InfoviewSearchM Html := do
+  return <li>
+    {← mkSingleSuggestion tac html isText}
   </li>
 
 def mkListElement (htmls : Array Html) (header : Html) (startOpen := true) : Html :=
@@ -215,6 +242,16 @@ def mkListElement (htmls : Array Html) (header : Html) (startOpen := true) : Htm
     <summary className="mv2 pointer"> {header} </summary>
     {.element "ul" #[("style", json% { "padding-left" : "0", "list-style" : "none"})] htmls}
   </details>
+
+@[inline]
+def mkIncrementalSuggestions (name : String) (k : (Html → BaseIO Unit) → InfoviewSearchM Unit) :
+    InfoviewSearchM Html :=
+  mkRefreshComponentM (.text "") fun token ↦ asComputation name do
+    let htmls ← IO.mkRef #[]
+    k fun html ↦ do
+      htmls.modify (·.push html)
+      token.refresh (Html.element "div" #[] (← htmls.get))
+
 
 end Widget
 
@@ -252,32 +289,3 @@ def kabstractFindsPositions (e p : Expr) (targetPos : SubExpr.Pos) : MetaM Bool 
   | .error found => return found
 
 end InfoviewSearch
-
-section MonadDrop
-
-/--
-The class `MonadDrop m n` allows a computation in monad `m` to be run in monad `n`.
-For example, a `MetaM` computation can be ran in `EIO Exception`,
-which can then be ran as a task using `EIO.asTask`.
--/
-class MonadDrop (m : Type → Type) (n : outParam <| Type → Type) where
-  /-- Translates an action from monad `m` into monad `n`. -/
-  dropM {α} : m α → m (n α)
-
-export MonadDrop (dropM)
-
-variable {m n : Type → Type} [Monad m] [MonadDrop m n]
-
-instance : MonadDrop m m where
-  dropM := pure
-
-instance {ρ} : MonadDrop (ReaderT ρ m) n where
-  dropM act := fun ctx => dropM (act ctx)
-
-instance {σ} : MonadDrop (StateT σ m) n where
-  dropM act := do liftM <| dropM <| act.run' (← get)
-
-instance {ω σ} [MonadLiftT (ST ω) m] : MonadDrop (StateRefT' ω σ m) n where
-  dropM act := do liftM <| dropM <| act.run' (← get)
-
-end MonadDrop

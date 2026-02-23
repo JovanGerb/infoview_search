@@ -132,14 +132,14 @@ def tacticSyntax (e eNew : Expr) (rwKind : RwKind) (hyp? : Option Name) :
 
 /-- Render the unfolds of `e` as given by `filteredUnfolds`, with buttons at each suggestion
 for pasting the rewrite tactic. Return `none` when there are no unfolds. -/
-def renderUnfolds (e : Expr) (rwKind : RwKind) (hyp? : Option Name) (pasteInfo : PasteInfo) :
-    MetaM (Option Html) := do
+def renderUnfolds (e : Expr) (rwKind : RwKind) (hyp? : Option Name) :
+    InfoviewSearchM (Option Html) := do
   let results ← filteredUnfolds e
   if results.isEmpty then
     return none
   let htmls ← results.mapM fun unfold => do
     let tactic ← tacticSyntax e unfold rwKind hyp?
-    mkSuggestion tactic pasteInfo <InteractiveCode fmt={← ppExprTagged unfold}/>
+    mkSuggestion tactic <InteractiveCode fmt={← ppExprTagged unfold}/>
   return mkListElement (startOpen := false) htmls <| .text "unfold"
 
 end InfoviewSearch.InteractiveUnfold

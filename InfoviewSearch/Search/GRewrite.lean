@@ -128,7 +128,6 @@ structure GrwLemma where
   relName : Name
 
 structure GrwInfo where
-  pasteInfo : PasteInfo
   rootExpr : Expr
   subExpr : Expr
   pos : SubExpr.Pos
@@ -169,7 +168,8 @@ private def tacticSyntax (lem : GrwLemma) (i : GrwInfo) (proof : Expr) (justLemm
 
 set_option linter.style.emptyLine false in
 /-- Generate the suggestion for rewriting with `lem`. -/
-def GrwLemma.generateSuggestion (i : GrwInfo) (lem : GrwLemma) : MetaM (Result GrwKey) := do
+def GrwLemma.generateSuggestion (i : GrwInfo) (lem : GrwLemma) :
+    InfoviewSearchM (Result GrwKey) := do
   withReducible do withNewMCtxDepth do
   let mctx ← getMCtx
   (·.getDM do throwError "no suitable `grw` relation was found") =<< i.gpos.findSomeM? fun pos ↦ do
@@ -223,11 +223,11 @@ def GrwLemma.generateSuggestion (i : GrwInfo) (lem : GrwLemma) : MetaM (Result G
       <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={extraGoal}/> </div>
   let filtered ←
     if !isRefl && !makesNewMVars then
-      some <$> mkSuggestion tactic i.pasteInfo (.element "div" #[] htmls)
+      some <$> mkSuggestion tactic (.element "div" #[] htmls)
     else
       pure none
   htmls := htmls.push (<div> {← lem.name.toHtml} </div>)
-  let unfiltered ← mkSuggestion tactic i.pasteInfo (.element "div" #[] htmls)
+  let unfiltered ← mkSuggestion tactic (.element "div" #[] htmls)
   let pattern ← forallTelescopeReducing (← lem.name.getType) fun _ e => do
     let mkApp2 _ lhs rhs := (← instantiateMVars e).cleanupAnnotations
       | throwError "Expected relation, not {indentExpr e}"
