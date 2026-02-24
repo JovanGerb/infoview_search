@@ -3,6 +3,7 @@ module
 public import InfoviewSearch.Search.TryCandidates
 public import InfoviewSearch.Tactics
 public import InfoviewSearch.NormTactics
+public import InfoviewSearch.HypTactics
 public import InfoviewSearch.Unfold
 public meta import Mathlib.Lean.Meta.KAbstractPositions
 
@@ -32,13 +33,20 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
   -- we should figure out how to use `rename_i` to actually refer to shadowed local variables.
   let lctx := (← getLCtx) |>.sanitizeNames.run' {options := (← getOptions)}
   Meta.withLCtx' lctx do
-  let mut htmls : Array Html := #[]
-  if let some html ← renderTactic loc then
-    htmls := htmls.push html
   let (fvarId?, pos) ← match loc.loc with
     | .hypType fvarId pos  => pure (some fvarId, pos)
     | .target pos => pure (none, pos)
-    | _ => token.refresh (.element "div" #[] htmls); return
+    | .hyp fvarId =>
+      if let some html ← suggestForHyp fvarId then
+        token.refresh html
+      else
+        let fvar ← Widget.ppExprTagged (.fvar fvarId)
+        token.refresh
+          <p> No suggestions found for hypothesis <InteractiveCode fmt={fvar}/> </p>
+      return
+    | .hypValue .. =>
+      token.refresh <| .text "Error: selected location is a `.hypValue`"
+      return
   let rootExpr ← instantiateMVars <| ← match fvarId? with
     | some fvarId => fvarId.getType
     | none => loc.mvarId.getType
@@ -46,17 +54,19 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
   -- compute the occurrence for each suggestion separately, to avoid inaccuracies.
   viewKAbstractSubExpr' rootExpr pos fun subExpr rwKind ↦ do
   let hyp? ← fvarId?.mapM (·.getUserName)
-  let mut htmls := htmls
   let convPath? ←
     if pos.isRoot then pure none else some <$> Conv.Path.ofSubExprPosArray rootExpr pos.toArray
   let rewritingInfo := { hyp?, convPath? }
 
-  -- Presumably we should think better about which order to put these suggestions in.
+  let mut htmls : Array Html := #[]
+  if let some html ← renderTactic then
+    htmls := htmls.push html
+  -- We may want to think better about which order to put these suggestions in.
   htmls := htmls.push (← suggestPush subExpr rewritingInfo)
   htmls := htmls.push (← suggestSimp subExpr rewritingInfo)
   htmls := htmls.push (← suggestNormCast subExpr rewritingInfo)
   htmls := htmls.push (← suggestAlgebraicNormalization subExpr rewritingInfo)
-  if let some html ← InteractiveUnfold.renderUnfolds subExpr rwKind hyp? then
+  if let some html ← InteractiveUnfold.renderUnfolds subExpr rwKind then
     htmls := htmls.push html
 
   let (searchHtml, token') ← mkRefreshComponent <| .text "searching for applicable lemmas"
@@ -64,7 +74,7 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
   token.refresh (.element "div" #[] htmls)
 
   let ppSubExpr ← Widget.ppExprTagged subExpr
-  let state ← initializeWidgetState rootExpr subExpr pos rwKind fvarId? parentDecl?
+  let state ← initializeWidgetState rootExpr subExpr rwKind parentDecl?
   state.repeatRefresh ppSubExpr token'
 
 @[server_rpc_method]
@@ -92,7 +102,10 @@ public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
     cursorPos := props.pos
     computations := ← IO.mkRef ∅
     ctx := goal.ctx.val
-    }
+    goal := loc.mvarId
+    hyp? := loc.fvarId?
+    pos := loc.pos
+  }
   let result ← goal.ctx.val.runMetaM {} do loc.mvarId.withContext do
     mkCancelRefreshComponent props.cancelTkRef.val (.text "searching for suggestions..")
       (generateSuggestions loc parentDecl?) |>.run ctx

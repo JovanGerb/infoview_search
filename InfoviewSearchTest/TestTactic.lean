@@ -82,7 +82,11 @@ scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic
     onGoal := none
     stx := default
     computations := ← IO.mkRef ∅
-    ctx := ← mkElabContextInfo }
+    ctx := ← mkElabContextInfo
+    goal := mvarId
+    hyp?
+    pos := pos?.getD .root
+  }
   let (html, token) ← mkRefreshComponent
   (generateSuggestions { loc, mvarId } none token).run ctx
   _ ← statusToken.refreshRef.getLast -- wait until everything is done

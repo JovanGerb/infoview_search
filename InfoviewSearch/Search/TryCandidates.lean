@@ -32,50 +32,48 @@ open Meta.RefinedDiscrTree in
 of sections of candidates, where each section corresponds to one kind of match with the
 discrimination tree. -/
 @[inline]
-def getCandidatesAux (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (gpos : Array GrwPos)
-    (rwKind : RwKind) (hyp? : Option Name)
+def getCandidatesAux (rootExpr subExpr : Expr) (gpos : Array GrwPos) (rwKind : RwKind)
     (rw : Expr → MetaM (MatchResult RwLemma)) (grw : Expr → MetaM (MatchResult GrwLemma))
     (app : Expr → MetaM (MatchResult ApplyLemma)) (appAt : Expr → MetaM (MatchResult ApplyAtLemma))
-    : MetaM (Array Candidates) := do
+    : InfoviewSearchM (Array Candidates) := do
   let mut cands : Std.TreeMap Nat (Array Candidates) := {}
   /- The order in which we show the suggestions for the same pattern for different tactics
   depends on the following insertion order.
   We choose the order `grw` => `rw` => `apply(at)`. -/
   if !gpos.isEmpty then
     cands := cands ++ (← grw subExpr).elts.map fun _ ↦ (·.map <|
-      .grw { rootExpr, subExpr, pos, hyp?, rwKind, gpos })
+      .grw { rootExpr, subExpr, rwKind, gpos })
   let mut rwExpr := subExpr
-  let mut rwPos := pos
+  let mut rwPos := (← read).pos
   repeat
     /- TODO: we are passing the same `rwKind` to each of these nested applications, but it is
     certainly possible that the correct `rwKind` is not the same for all of these.
     Though this edge case is probably very rare. -/
     cands := cands ++ (← rw rwExpr).elts.map fun _ ↦ (·.map (.rw <|
-      { rootExpr, subExpr := rwExpr, pos := rwPos, hyp?, rwKind }))
+      { rootExpr, subExpr := rwExpr, pos := rwPos, rwKind }))
     match rwExpr with
     | .app f _ =>
       rwExpr := f
       rwPos := rwPos.pushAppFn
     | _ => break
-  if pos == .root then
-    if let some hyp := hyp? then
+  if (← read).pos == .root then
+    if (← read).hyp?.isSome then
       cands := cands ++ (← appAt rootExpr).elts.map fun _ ↦ (·.map (.appAt <|
-        { target := rootExpr, hyp }))
+        { target := rootExpr }))
     else
       cands := cands ++ (← app rootExpr).elts.map fun _ ↦ (·.map (.app <|
         { target := rootExpr }))
   return cands.foldr (init := #[]) fun _ val acc ↦ acc ++ val
 
-def getImportCandidates (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (gpos : Array GrwPos)
-    (rwKind : RwKind) (hyp? : Option Name) : MetaM (Array Candidates) :=
-  getCandidatesAux rootExpr subExpr pos gpos rwKind hyp?
+def getImportCandidates (rootExpr subExpr : Expr) (gpos : Array GrwPos)
+    (rwKind : RwKind) : InfoviewSearchM (Array Candidates) :=
+  getCandidatesAux rootExpr subExpr gpos rwKind
     (getImportMatches rwRef) (getImportMatches grwRef)
     (getImportMatches appRef) (getImportMatches appAtRef)
 
-def getCandidates (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (gpos : Array GrwPos)
-    (rwKind : RwKind) (hyp? : Option Name) (pres : PreDiscrTrees) :
-    MetaM (Array Candidates) :=
-  getCandidatesAux rootExpr subExpr pos gpos rwKind hyp?
+def getCandidates (rootExpr subExpr : Expr) (gpos : Array GrwPos)
+    (rwKind : RwKind) (pres : PreDiscrTrees) : InfoviewSearchM (Array Candidates) :=
+  getCandidatesAux rootExpr subExpr gpos rwKind
     (getMatches pres.rw.toRefinedDiscrTree) (getMatches pres.grw.toRefinedDiscrTree)
     (getMatches pres.app.toRefinedDiscrTree) (getMatches pres.appAt.toRefinedDiscrTree)
 
@@ -149,12 +147,14 @@ public structure WidgetState where
   header : Html
 
 set_option linter.style.emptyLine false in
-public def initializeWidgetState (rootExpr subExpr : Expr) (pos : SubExpr.Pos)
-    (rwKind : RwKind) (fvarId? : Option FVarId) (parentDecl? : Option Name) :
+public def initializeWidgetState (rootExpr subExpr : Expr)
+    (rwKind : RwKind) (parentDecl? : Option Name) :
     InfoviewSearchM WidgetState := do
   Core.checkSystem "infoview_search"
   let mut sections := #[]
 
+  let pos := (← read).pos
+  let fvarId? := (← read).hyp?
   let gpos ← getGrwPos? rootExpr subExpr pos fvarId?.isSome
   let choice : Choice := {
     rw := true
@@ -163,20 +163,19 @@ public def initializeWidgetState (rootExpr subExpr : Expr) (pos : SubExpr.Pos)
     appAt := pos == .root && fvarId?.isSome
   }
   let pres ← computeLCtxDiscrTrees choice fvarId?
-  let hyp? ← fvarId?.mapM (·.getUserName)
   Core.checkSystem "infoview_search"
-  for cand in ← getCandidates rootExpr subExpr pos gpos rwKind hyp? pres do
+  for cand in ← getCandidates rootExpr subExpr gpos rwKind pres do
     sections := sections.push (← cand.generateSuggestions .hypothesis)
 
   let pres ← computeModuleDiscrTrees choice parentDecl?
   Core.checkSystem "infoview_search"
-  for cand in ← getCandidates rootExpr subExpr pos gpos rwKind hyp? pres do
+  for cand in ← getCandidates rootExpr subExpr gpos rwKind pres do
     sections := sections.push (← cand.generateSuggestions .fromFile)
 
   Core.checkSystem "infoview_search"
   let importTask? := some <| ← EIO.asTask <| ← dropM do
     computeImportDiscrTrees choice
-    let cands ← getImportCandidates rootExpr subExpr pos gpos rwKind hyp?
+    let cands ← getImportCandidates rootExpr subExpr gpos rwKind
     cands.mapM (·.generateSuggestions .fromImport)
 
   return { sections, importTask?, header :=

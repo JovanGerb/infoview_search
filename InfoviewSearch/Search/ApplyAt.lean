@@ -18,7 +18,6 @@ structure ApplyAtLemma where
 
 structure ApplyAtInfo where
   target : Expr
-  hyp : Name
 
 structure ApplyAtKey where
   numGoals : Nat
@@ -42,9 +41,9 @@ def ApplyAtKey.isDuplicate (a b : ApplyAtKey) : MetaM Bool :=
       <&&> isExplicitEq a.newGoals[i]!.expr b.newGoals[i]!.expr
 
 /-- Return the `apply` tactic that performs the application. -/
-private def tacticSyntax (lem : ApplyAtLemma) (i : ApplyAtInfo) : MetaM (TSyntax `tactic) := do
+private def tacticSyntax (lem : ApplyAtLemma) : InfoviewSearchM (TSyntax `tactic) := do
   -- let proof ← withOptions (pp.mvars.set · false) (PrettyPrinter.delab app.proof)
-  `(tactic| apply $(mkIdent (← lem.name.unresolveName)) at $(mkIdent i.hyp))
+  `(tactic| apply $(mkIdent (← lem.name.unresolveName)) at $(← getHypIdent!))
 
 set_option linter.style.emptyLine false in
 /-- Generate a suggestion for applying `lem`. -/
@@ -74,7 +73,7 @@ def ApplyAtLemma.generateSuggestion (lem : ApplyAtLemma) (i : ApplyAtInfo) :
     name := lem.name.toString
     newGoals := (← newGoals.mapM (abstractMVars ·.1)).push (← abstractMVars replacement)
   }
-  let tactic ← tacticSyntax lem i
+  let tactic ← tacticSyntax lem
   let mut explicitGoals := #[]
   for (goal, bi) in newGoals do
     -- TODO: think more carefully about which goals should be displayed

@@ -54,12 +54,11 @@ def renderIntro (intros : Array (Name × Expr)) (goal : Expr) : InfoviewSearchM 
 TODO: suggest different depths of introducing, depending on unfolding
 TODO: suggest `rintro rfl` when applicable.
 -/
-def suggestIntro (loc : SubExpr.GoalsLocation) : InfoviewSearchM (Option Html) := do
-  let .target pos := loc.loc | return none
-  unless pos == .root do return none
+def suggestIntro : InfoviewSearchM (Option Html) := do
+  unless (← read).pos == .root && (← read).hyp?.isNone do return none
   -- Only run `whnf` on the outer most type (via `getType'`).
   -- If the user wants to `intro` more, they can simply do it again.
-  let goal← loc.mvarId.getType'
+  let goal ← (← read).goal.getType'
   unless goal.isForall do return none
   let usedNames : NameSet := (← getLCtx).decls.foldl (init := ∅) fun
     | s, some decl => s.insert decl.userName
@@ -83,33 +82,17 @@ def suggestIntro (loc : SubExpr.GoalsLocation) : InfoviewSearchM (Option Html) :
       (← `(tactic| intro))
       (← renderIntro intros goal)
 
-def renderRfl (loc : SubExpr.GoalsLocation) : InfoviewSearchM (Option Html) := do
-  let .target pos := loc.loc | return none
-  unless pos == .root do return none
-  try withoutModifyingMCtx loc.mvarId.applyRfl catch _ => return none
+def renderRfl : InfoviewSearchM (Option Html) := do
+  unless (← read).pos == .root && (← read).hyp?.isNone do return none
+  try withoutModifyingMCtx (← read).goal.applyRfl catch _ => return none
   let tactic ← `(tactic| rfl)
   mkSuggestion (isText := true) tactic <| .text "reflexivity"
 
-def renderInduction (loc : SubExpr.GoalLocation) : InfoviewSearchM (Option Html) := do
-  let .hyp fvarId := loc | return none
-  let some typeHead := (← whnf (← fvarId.getType)).getAppFn.constName? | return none
-  unless ← isInductive typeHead do return none
-  let name ← fvarId.getUserName
-  let mut usingClause := none
-  let elims ← getCustomEliminators
-  if !elims.map.contains (true, #[typeHead]) then
-    if (← getEnv).contains (typeHead.str "induction") then
-      usingClause := some (mkIdent (typeHead.str "induction"))
-  let tactic ← `(tactic| induction $(mkIdent name):ident $[using $usingClause]?)
-  mkSuggestion (isText := true) ⟨tactic.1⟩ <| .text s!"induction on {name}"
-
-def renderTactic (loc : SubExpr.GoalsLocation) : InfoviewSearchM (Option Html) := do
+def renderTactic : InfoviewSearchM (Option Html) := do
   let mut tactics := #[]
-  if let some html ← renderRfl loc then
+  if let some html ← renderRfl then
     tactics := tactics.push html
-  if let some html ← renderInduction loc.loc then
-    tactics := tactics.push html
-  if let some html ← suggestIntro loc then
+  if let some html ← suggestIntro then
     tactics := tactics.push html
   if !tactics.isEmpty then
     return mkSuggestionList tactics <| .text "tactics"

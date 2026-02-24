@@ -130,8 +130,6 @@ structure GrwLemma where
 structure GrwInfo where
   rootExpr : Expr
   subExpr : Expr
-  pos : SubExpr.Pos
-  hyp? : Option Name
   rwKind : RwKind
   gpos : Array GrwPos
 
@@ -159,12 +157,12 @@ def GrwKey.isDuplicate (a b : GrwKey) : MetaM Bool :=
 
 /-- Return the rewrite tactic that performs the rewrite. -/
 private def tacticSyntax (lem : GrwLemma) (i : GrwInfo) (proof : Expr) (justLemmaName : Bool) :
-    MetaM (TSyntax `tactic):= do
+    InfoviewSearchM (TSyntax `tactic) := do
   let proof ← if justLemmaName then
       `(term| $(mkIdent <| ← lem.name.unresolveName))
     else
       withOptions (pp.mvars.set · false) (PrettyPrinter.delab proof)
-  mkRewrite i.rwKind lem.symm proof i.hyp? (grw := true)
+  mkRewrite i.rwKind lem.symm proof (← getHypIdent?) (grw := true)
 
 set_option linter.style.emptyLine false in
 /-- Generate the suggestion for rewriting with `lem`. -/
@@ -201,7 +199,7 @@ def GrwLemma.generateSuggestion (i : GrwInfo) (lem : GrwLemma) :
   let isRefl ← isExplicitEq e replacement
   let justLemmaName ←
     if i.rwKind matches .hasBVars then pure true
-    else withMCtx mctxOrig do kabstractFindsPositions i.rootExpr lhsOrig i.pos
+    else withMCtx mctxOrig do kabstractFindsPositions i.rootExpr lhsOrig (← read).pos
   let key := {
     numGoals := extraGoals.size
     nameLenght := lem.name.length

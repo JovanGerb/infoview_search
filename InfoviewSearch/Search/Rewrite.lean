@@ -71,8 +71,9 @@ structure RwLemma where
 structure RwInfo where
   rootExpr : Expr
   subExpr : Expr
+  /-- Recall that we also suggest rewrites for subexpressions of the selected expression,
+  in order to be able to rewrite with partially applied lemmas. -/
   pos : SubExpr.Pos
-  hyp? : Option Name
   rwKind : RwKind
 
 structure RwKey where
@@ -100,7 +101,7 @@ def RwKey.isDuplicate (a b : RwKey) : MetaM Bool :=
     <&&> isExplicitEq a.replacement.expr b.replacement.expr
 
 /-- Return the rewrite tactic that performs the rewrite. -/
-private def tacticSyntax (lem : RwLemma) (rwKind : RwKind) (hyp? : Option Name) (proof : Expr)
+private def tacticSyntax (lem : RwLemma) (rwKind : RwKind) (hyp? : Option Ident) (proof : Expr)
     (justLemmaName : Bool) : MetaM (TSyntax `tactic) := do
   let proof ← if justLemmaName then
       `(term| $(mkIdent <| ← lem.name.unresolveName))
@@ -155,7 +156,7 @@ def RwLemma.generateSuggestion (i : RwInfo) (lem : RwLemma) : InfoviewSearchM (R
     name := lem.name.toString
     replacement := ← abstractMVars replacement
   }
-  let tactic ← tacticSyntax lem rwKind i.hyp? proof justLemmaName
+  let tactic ← tacticSyntax lem rwKind (← getHypIdent?) proof justLemmaName
   let mut explicitGoals := #[]
   for (mvarId, bi) in extraGoals do
     -- TODO: think more carefully about which goals should be displayed

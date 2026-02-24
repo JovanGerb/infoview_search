@@ -80,6 +80,12 @@ structure Context where
   statusToken : RefreshToken
   /-- This use used by `ppTacticTagged`. -/
   ctx : Elab.ContextInfo
+  /-- The main goal. -/
+  goal : MVarId
+  /-- The selected hypothesis, if any. -/
+  hyp? : Option FVarId
+  /-- The position of the selected subexpression. -/
+  pos : SubExpr.Pos
 
 abbrev InfoviewSearchM := ReaderT Context MetaM
 
@@ -101,6 +107,13 @@ def asComputation {α} (name : String) (k : InfoviewSearchM α) : InfoviewSearch
     (← read).computations.modify (·.erase name)
     rerenderStatus
 
+def getHypIdent? : InfoviewSearchM (Option Ident) := do
+  let some fvarId := (← read).hyp? | return none
+  return mkIdent (← fvarId.getUserName)
+
+def getHypIdent! : InfoviewSearchM Ident := do
+  let some fvarId := (← read).hyp? | throwError "no hypothesis was selected"
+  return mkIdent (← fvarId.getUserName)
 
 section Meta
 
@@ -146,9 +159,8 @@ inductive RwKind where
 /-- Return syntax for the rewrite tactic `rw [e]`.
 When `occ` is `none`, this means that `kabstract` cannot find the expression
 due to bound variables, so in that case we fall back to `simp_rw`. -/
-def mkRewrite (kind : RwKind) (symm : Bool) (e : Term) (loc : Option Name)
+def mkRewrite (kind : RwKind) (symm : Bool) (e : Term) (loc : Option Ident)
     (grw := false) : CoreM (TSyntax `tactic) := do
-  let loc := loc.map mkIdent
   let rule ← if symm then `(Parser.Tactic.rwRule| ← $e) else `(Parser.Tactic.rwRule| $e:term)
   if grw then
     match kind with

@@ -224,8 +224,7 @@ TODO: add tests for
 
 TODO:
 
-- improve the blacklist heuristic. We should be allowed to use `.inj` and `.injEq`.
-  Note: there are theorems with `Simproc` in the name, which should be excluded.
+- Note: there are theorems with `Simproc` in the name, which should be excluded.
 - Allow a user-defined filter in addition to the blacklist?
 - improve `nth_rw` heuristic & add a test. Maybe, there should be a `set_option` that determines
   whether to print arguments explicitly.
@@ -235,7 +234,6 @@ TODO:
   - `simp`/`dsimp`. This requires integrating with `conv` mode,
     in order to be able to simplify only subterms.
   - `contrapose(!)`/`absurd(!)` on hypothesis and `by_contra(!)` on goal?
-  - `push_neg`, `norm_cast`, `push_cast`, `ring_nf`, `field_simp`
   - `cases`/`induction`/`rcases`/`subst`
   - `ext`, `funext`
   - `congr!`, `gcongr`
