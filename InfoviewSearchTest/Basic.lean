@@ -22,7 +22,7 @@ set_option linter.privateModule false
 open scoped InfoviewSearch.Test
 
 #infoview_search
--- set_option infoview_search.debug true
+set_option infoview_search.debug true
 
 axiom test_sorry {α : Sort*} : α
 
@@ -105,7 +105,7 @@ example {α} [Lattice α] [AddGroup α] (f : ℕ → α) (c : α)
 example (s t : Set α) (h : s ⊆ t) (h' : t ⊂ s) : s ⊆ t ∪ s := by
   search_test "/0/1" => "nth_grw 1 [h]"
   search_test "/1/0/1" => "grw [← h]"
-  search_test "" => "intro x h₁"
+  search_test "" => "intro a h₁"
   exact test_sorry
 
 namespace AntiSymmRelTest
@@ -127,7 +127,7 @@ example (h : a ≈ b) (h' : b ≈ c) : f a ≤ f c := by
 
 end AntiSymmRelTest
 
--- test for over-applications
+-- Test for over-applications
 example (f g : Nat → Nat) : (f + g) 2 = f 2 + g 2 := by
   search_test "/0/1" => "rw [add_comm]"
   search_test "/0/1/0" => "rw [add_comm]"
@@ -137,7 +137,7 @@ example (f g : Nat → Nat) : (f + g) 2 = f 2 + g 2 := by
     "rw [add_comm (f 2) (g 2)]"
   exact test_sorry
 
--- test for motive not type correct issue
+-- Test for motive not type correct issue
 example (a b : Nat) (l : List Nat) (hl : a + b < l.length) (h : l[a + b] = 5) :
     l[b + a] = 5 := by
   search_test "/0/1/0/1" => "rw! [Nat.add_comm]" "rw! [add_comm]"
@@ -154,7 +154,7 @@ example (a b : Nat) (l : List Nat) (hl : a + b < l.length) (h : l[a + b] = 5) :
 
 lemma Nat.my_inj (n m : Nat) (h : n.succ = m.succ) : n = m := Nat.succ.inj h
 
--- test which lemmas are and aren't filtered out:
+-- Test which lemmas are and aren't filtered out:
 example (n m : Nat) (h : n.succ = m.succ) : True := by
   search_test h "" =>
     "rw [Nat.succ_inj] at h" "rw [Nat.succ.injEq] at h" "apply Nat.my_inj at h"
@@ -164,24 +164,34 @@ example (n m : Nat) (h : n.succ = m.succ) : True := by
     search_test h "" => "apply Nat.succ.inj at h  "
   trivial
 
--- test the `rfl` and `intro` suggestions
+-- Test the `rfl` and `intro` suggestions
 example {α} (s : Set α) : s ⊆ s := by
-  search_test "" => "intro x h" "rfl"
+  search_test "" => "intro a h" "rfl"
   rfl
 
--- test `push` and `push_neg`
+-- The names of the introduced variables are modified to not overlap existing names.
+example {α} (s : Set α) (a h : 1 = 2) : s ⊆ s := by
+  search_test "" => "intro a₁ h₁" "rfl"
+  rfl
+
+-- We're happy to overwrite global constants
+example : ∀ Nat : Nat, Nat = Nat := by
+  search_test "" => "intro Nat"
+  intro Nat
+  rfl
+-- Test `push` and `push_neg`
 example (a b c : α) (s : Set α) (h : a ∈ insert b s) : True := by
   search_test h "" => "simp at h" "push _ ∈ _ at h"
   trivial
 
--- suggest `+distrib` when it is relevant
+-- Suggest `+distrib` when it is relevant
 example (p q r : Prop) (h : ¬ (p ∧ q)) (h' : ¬ (p ∨ q)) : True := by
   search_test h "" => "push_neg at h" "push_neg +distrib at h"
   search_test h' "" => "push_neg at h'"
   fail_if_success search_test h' "" => "push_neg +distrib at h'"
   trivial
 
--- test `norm_cast` and `push_cast`
+-- Test `norm_cast` and `push_cast`
 example (a b c : Nat) : (↑(a + b) : Int) * c = ↑(a * c) + (b * c) := by
   search_test "" => "norm_cast" "push_cast" "dsimp" "ring_nf"
   push_cast
@@ -194,7 +204,7 @@ example (a b c : Nat) : (↑(a + b) : Int) * c = ↑(a * c) + (b * c) := by
     "ring_nf" "exact Nat.add_mul a b c" "exact add_mul a b c"
   ring_nf
 
--- test norm_num
+-- Test norm_num
 example : (2 : ℚ) = 1 + 1 := by
   search_test "" => "norm_num" "norm_cast" "ring_nf"
   norm_num

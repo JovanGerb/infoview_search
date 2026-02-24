@@ -140,6 +140,6 @@ def renderUnfolds (e : Expr) (rwKind : RwKind) (hyp? : Option Name) :
   let htmls ← results.mapM fun unfold => do
     let tactic ← tacticSyntax e unfold rwKind hyp?
     mkSuggestion tactic <InteractiveCode fmt={← ppExprTagged unfold}/>
-  return mkListElement (startOpen := false) htmls <| .text "unfold"
+  return mkSuggestionList (startOpen := false) htmls <| .text "unfold"
 
 end InfoviewSearch.InteractiveUnfold

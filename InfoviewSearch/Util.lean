@@ -78,6 +78,8 @@ structure Context where
   computations : IO.Ref (Std.TreeSet String)
   /-- The token for updating the HTML that represents the state of the ongoing computations. -/
   statusToken : RefreshToken
+  /-- This use used by `ppTacticTagged`. -/
+  ctx : Elab.ContextInfo
 
 abbrev InfoviewSearchM := ReaderT Context MetaM
 
@@ -210,7 +212,9 @@ end Syntax
 
 section Widget
 
-def mkSingleSuggestion (tac : TSyntax `tactic) (html : Html) (isText := false) :
+open Widget
+
+def mkSuggestion (tac : TSyntax `tactic) (html : Html) (isText := false) :
     InfoviewSearchM Html := do
   let (range, newText) ← mkInsertion tac (← read)
   let button :=
@@ -230,18 +234,36 @@ def mkSingleSuggestion (tac : TSyntax `tactic) (html : Html) (isText := false) :
     {button} {html}
     </div>
 
--- TODO: decide whether this function is needed at all.
-def mkSuggestion (tac : TSyntax `tactic) (html : Html) (isText := false) :
-    InfoviewSearchM Html := do
-  return <li>
-    {← mkSingleSuggestion tac html isText}
-  </li>
-
-def mkListElement (htmls : Array Html) (header : Html) (startOpen := true) : Html :=
+def mkSuggestionList (htmls : Array Html) (header : Html) (startOpen := true) : Html :=
   <details «open»={startOpen}>
     <summary className="mv2 pointer"> {header} </summary>
-    {.element "ul" #[("style", json% { "padding-left" : "0", "list-style" : "none"})] htmls}
+    {.element "div" #[] htmls}
   </details>
+
+/-- Pretty print a tactic with its docstring as hover info.
+
+This function is very much a hack.
+It uses the expression printing infrastructure, which wasn't meant for printing tactics.
+As a result, above the docstring, there is a loose ` : ` as if there is a term of some type there,
+but the term and type are missing.
+Also, it would be nice if the tactic could be printed in a different colour from expressions.
+-/
+def ppTacticTagged (tac : TSyntax `tactic) : InfoviewSearchM CodeWithInfos := do
+  let tag := 0
+  -- Hack: use `.ofCommandInfo` instead of `.ofTacticInfo` because it is easier.
+  let infos := .insert ∅ tag <| .ofCommandInfo { elaborator := `InfoviewSearch, stx := tac }
+  let tt := TaggedText.prettyTagged <| .tag tag (← PrettyPrinter.ppTactic tac)
+  -- TODO: I would love to print this using the keyword highlighting used by the editor,
+  -- but I have no idea how to do this.
+  tagCodeInfos (← read).ctx infos tt
+
+/-- Create a suggestion for inserting `stx` and tactic name `tac`. -/
+def mkTacticSuggestion (stx tac : TSyntax `tactic) (html : Html) (isText := false) :
+    InfoviewSearchM Html := do
+  mkSuggestion stx (isText := isText) <div>
+    <div>{html}</div>
+    <div><InteractiveCode fmt={← ppTacticTagged tac}/></div>
+    </div>
 
 @[inline]
 def mkIncrementalSuggestions (name : String) (k : (Html → BaseIO Unit) → InfoviewSearchM Unit) :

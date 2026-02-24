@@ -47,6 +47,17 @@ where
     | .ok props => return props
     | .error s => throwError "An error occurred when looking at the HTML: {s}"
 
+def mkElabContextInfo : MetaM Elab.ContextInfo :=
+  return {
+    env           := (← getEnv)
+    mctx          := (← getMCtx)
+    options       := (← getOptions)
+    currNamespace := (← getCurrNamespace)
+    openDecls     := (← getOpenDecls)
+    fileMap       := default
+    ngen          := (← getNGen)
+  }
+
 scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic =>
   Elab.Tactic.withMainContext do
   let hyp? ← hyp?.mapM fun hyp ↦ return (← getLocalDeclFromUserName hyp.getId).fvarId
@@ -70,7 +81,8 @@ scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic
     «meta» := { (default : DocumentMeta) with text }
     onGoal := none
     stx := default
-    computations := ← IO.mkRef ∅ }
+    computations := ← IO.mkRef ∅
+    ctx := ← mkElabContextInfo }
   let (html, token) ← mkRefreshComponent
   (generateSuggestions { loc, mvarId } none token).run ctx
   _ ← statusToken.refreshRef.getLast -- wait until everything is done

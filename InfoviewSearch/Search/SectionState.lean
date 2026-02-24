@@ -108,7 +108,7 @@ def SectionState.render (filter : Bool) (s : SectionState α) (tactic : String) 
   let suffix := if s.pending.isEmpty then suffix else suffix ++ " ⏳"
   let htmls := if filter then s.results.filterMap (·.filtered) else s.results.map (·.unfiltered)
   let htmls := if s.errors.isEmpty then htmls else htmls.push <| renderErrors s.errors
-  mkListElement htmls <span> {.text s!"{tactic}: "}{head} {.text suffix} </span>
+  mkSuggestionList htmls <span> {.text s!"{tactic}: "}{head} {.text suffix} </span>
 where
   /-- Render the error messages -/
   renderErrors (errors : Array Html) : Html :=

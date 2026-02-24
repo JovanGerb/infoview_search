@@ -26,7 +26,6 @@ open Lean Meta Widget ProofWidgets Jsx Mathlib.Tactic Mathlib.Meta
 public structure RewritingInfo where
   hyp? : Option Name
   convPath? : Option Conv.Path
-  ctx : Elab.ContextInfo
 
 /--
 Given that a normalization tactic changed `old` to `new`, return the suggestion for this tactic.
@@ -42,17 +41,7 @@ def suggestNormalize (old new : Expr) (info : RewritingInfo)
       Conv.pathToStx convStx path info.hyp?
     | _, _ =>
       tacStx (info.hyp?.map mkIdent)
-  some <$> mkSingleSuggestion tac <div>
-    <div><InteractiveCode fmt={← ppExprTagged new}/></div>
-    <div><InteractiveCode fmt={← ppTactic (← tacStx none)}/></div>
-    </div>
-where
-  ppTactic (stx : TSyntax `tactic) : CoreM CodeWithInfos := do
-    let tag := 0
-    -- Hack: use `.ofCommandInfo` instead of `.ofTacticInfo` because it is easier.
-    let infos := .insert ∅ tag <| .ofCommandInfo { elaborator := `InfoviewSearch, stx }
-    let tt := TaggedText.prettyTagged <| .tag tag (← PrettyPrinter.ppTactic stx)
-    tagCodeInfos info.ctx infos tt
+  mkTacticSuggestion tac (← tacStx none) <InteractiveCode fmt={← ppExprTagged new}/>
 
 section Cast
 

@@ -24,25 +24,14 @@ def viewKAbstractSubExpr' {m α}
   else
     Meta.viewSubexpr (fun _ e ↦ k e .hasBVars) pos e
 
-def mkElabContextInfo : MetaM Elab.ContextInfo :=
-  return {
-    env           := (← getEnv)
-    mctx          := (← getMCtx)
-    options       := (← getOptions)
-    currNamespace := (← getCurrNamespace)
-    openDecls     := (← getOpenDecls)
-    fileMap       := default
-    ngen          := (← getNGen)
-  }
-
 set_option linter.style.emptyLine false
 
 public def generateSuggestions (loc : SubExpr.GoalsLocation)
     (parentDecl? : Option Name) (token : RefreshToken) : InfoviewSearchM Unit := do
-  let decl ← loc.mvarId.getDecl
-  -- TODO: decide whether we need this name sanitation
-  let lctx := decl.lctx |>.sanitizeNames.run' {options := (← getOptions)}
-  Meta.withLCtx lctx decl.localInstances do
+  -- TODO: instead of just putting `✝` after inaccessible names,
+  -- we should figure out how to use `rename_i` to actually refer to shadowed local variables.
+  let lctx := (← getLCtx) |>.sanitizeNames.run' {options := (← getOptions)}
+  Meta.withLCtx' lctx do
   let mut htmls : Array Html := #[]
   if let some html ← renderTactic loc then
     htmls := htmls.push html
@@ -52,7 +41,7 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
     | _ => token.refresh (.element "div" #[] htmls); return
   let rootExpr ← instantiateMVars <| ← match fvarId? with
     | some fvarId => fvarId.getType
-    | none => pure decl.type
+    | none => loc.mvarId.getType
   -- TODO: instead of computing the occurrences a single time (i.e. the `n` in `nth_rw n`),
   -- compute the occurrence for each suggestion separately, to avoid inaccuracies.
   viewKAbstractSubExpr' rootExpr pos fun subExpr rwKind ↦ do
@@ -60,7 +49,7 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
   let mut htmls := htmls
   let convPath? ←
     if pos.isRoot then pure none else some <$> Conv.Path.ofSubExprPosArray rootExpr pos.toArray
-  let rewritingInfo := { hyp?, convPath?, ctx := ← mkElabContextInfo }
+  let rewritingInfo := { hyp?, convPath? }
 
   -- Presumably we should think better about which order to put these suggestions in.
   htmls := htmls.push (← suggestPush subExpr rewritingInfo)
@@ -102,10 +91,11 @@ public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
     «meta» := doc.meta
     cursorPos := props.pos
     computations := ← IO.mkRef ∅
+    ctx := goal.ctx.val
     }
-  let result ←  goal.ctx.val.runMetaM {} do
-    (mkCancelRefreshComponent props.cancelTkRef.val (.text "searching for suggestions..") <|
-      generateSuggestions loc parentDecl?).run ctx
+  let result ← goal.ctx.val.runMetaM {} do loc.mvarId.withContext do
+    mkCancelRefreshComponent props.cancelTkRef.val (.text "searching for suggestions..")
+      (generateSuggestions loc parentDecl?) |>.run ctx
   return <details «open»={true}>
     <summary className="mv2 pointer">
       infoview_search suggestions: {statusHtml}
