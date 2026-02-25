@@ -21,7 +21,7 @@ meta section
 
 namespace InfoviewSearch
 
-open Lean Meta Widget ProofWidgets Jsx Mathlib.Tactic Mathlib.Meta
+open Lean Meta ProofWidgets Jsx Mathlib.Tactic Mathlib.Meta
 
 public structure RewritingInfo where
   hyp? : Option Name
@@ -41,7 +41,7 @@ def suggestNormalize (old new : Expr) (info : RewritingInfo)
       Conv.pathToStx convStx path info.hyp?
     | _, _ =>
       tacStx (info.hyp?.map mkIdent)
-  mkTacticSuggestion tac (← tacStx none) <InteractiveCode fmt={← ppExprTagged new}/>
+  mkTacticSuggestion tac (← tacStx none) (← exprToHtml new)
 
 section Cast
 

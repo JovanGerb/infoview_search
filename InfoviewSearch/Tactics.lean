@@ -41,11 +41,11 @@ def renderIntro (intros : Array (Name × Expr)) (goal : Expr) : InfoviewSearchM 
     return <div>
       <strong className="goal-hyp"> {.text name.toString} {.text " "} </strong>
       {.text ": "}
-      <InteractiveCode fmt={← Widget.ppExprTagged type} />
+      {← exprToHtml type}
       </div>
   let goal := <div key="goal">
     <strong className="goal-vdash">{.text "⊢ "}</strong>
-    <InteractiveCode fmt={← Widget.ppExprTagged goal} />
+    {← exprToHtml goal}
     </div>
   return .element "div" #[("className", Json.str "font-code tl pre-wrap")] (hyps.push goal)
 

@@ -59,7 +59,7 @@ public meta section
 
 namespace InfoviewSearch
 
-open Lean Meta Widget ProofWidgets Jsx Server
+open Lean Meta ProofWidgets Jsx
 
 /-- The structure for rewrite lemmas stored in the `RefinedDiscrTree`. -/
 structure RwLemma where
@@ -157,17 +157,14 @@ def RwLemma.generateSuggestion (i : RwInfo) (lem : RwLemma) : InfoviewSearchM (R
     replacement := ← abstractMVars replacement
   }
   let tactic ← tacticSyntax lem rwKind (← getHypIdent?) proof justLemmaName
-  let mut explicitGoals := #[]
+  let mut htmls := #[← exprToHtml replacement]
   for (mvarId, bi) in extraGoals do
     -- TODO: think more carefully about which goals should be displayed
     -- Are there lemmas where a hypothesis is marked as implicit,
     -- which we would still want to show as a new goal?
     if bi.isExplicit then
-      explicitGoals := explicitGoals.push (← ppExprTagged mvarId)
-  let mut htmls := #[<InteractiveCode fmt={← ppExprTagged replacement}/>]
-  for extraGoal in explicitGoals do
-    htmls := htmls.push
-      <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={extraGoal}/> </div>
+      htmls := htmls.push
+        <div> <strong className="goal-vdash">⊢ </strong> {← exprToHtml mvarId} </div>
   let filtered ←
     if !isRefl && !makesNewMVars then
       some <$> mkSuggestion tactic (.element "div" #[] htmls)
@@ -177,7 +174,7 @@ def RwLemma.generateSuggestion (i : RwInfo) (lem : RwLemma) : InfoviewSearchM (R
   let unfiltered ← mkSuggestion tactic (.element "div" #[] htmls)
   let pattern ← forallTelescopeReducing (← lem.name.getType) fun _ e => do
     let mkApp2 _ lhs rhs ← whnf e | throwError "Expected equation, not{indentExpr e}"
-    ppExprTagged <| if lem.symm then rhs else lhs
+    exprToHtml <| if lem.symm then rhs else lhs
   return { filtered, unfiltered, key, pattern }
 
 

@@ -69,22 +69,20 @@ where
     unless types.contains pre do return elims
     let mut elims := elims
     if let some str' := str.dropSuffix? '\'' then
-      let elim' := .str pre str'.toString
-      if env.contains elim' then
-        elims ← addEntry types env elims elim'
+      let elim := .str pre str'.toString
+      if env.contains elim then
+        elims ← addEntry types env elims elim
     if let some str' := str.dropSuffix? "_on" then
-      let elim' := .str pre str'.toString
-      if env.contains elim' then
-        elims := elims.insertIfNew elim' none
-    else if let some str' := str.dropSuffix? "On" then
-      let elim' := .str pre str'.toString
-      if env.contains elim' then
-        elims := elims.insertIfNew elim' none
-    else
-      -- We typically don't want to suggest `inductionOn` or `induction_on`
-      -- if `indunction` already existing.
-      elims := elims.insertIfNew elim none
-    return elims
+      let elim := .str pre str'.toString
+      if env.contains elim then
+        -- Don't suggest `a_on` if `a` exist
+        return elims.insertIfNew elim none
+    if let some str' := str.dropSuffix? "On" then
+      let elim := .str pre str'.toString
+      if env.contains elim then
+        -- Don't suggest `aOn` if `a` exist
+        return elims.insertIfNew elim none
+    return elims.insertIfNew elim none
   unfoldTypes (e : Expr) : MetaM (Std.HashSet Name) := do
     let e ← whnfR e
     let s ←
@@ -121,9 +119,8 @@ def classifyEliminator (fvarId : FVarId) (eliminator : Name) (induction? : Optio
           if isRec then return ((true, eliminator), elimInfo, targets)
     return ((false, eliminator), elimInfo, targets)
 
-open Widget Jsx in
 /-- Create a suggestion for inserting `stx` and tactic name `tac`. -/
-def mkInductionSuggestion (stx : TSyntax `tactic) (newGoals : Html)
+def mkInductionHtml (stx : TSyntax `tactic) (newGoals : Html)
     (induction : Bool) (using? : Option Name) :
     InfoviewSearchM Html := do
   -- Print the tactic without any argument (using a little syntax hack).
@@ -131,7 +128,7 @@ def mkInductionSuggestion (stx : TSyntax `tactic) (newGoals : Html)
   if using?.isSome then
     tac := tac ++ " using "
   let kind := if induction then ``Lean.Parser.Tactic.induction else ``Lean.Parser.Tactic.cases
-  let mut title := <InteractiveCode fmt={← ppWithDoc tac kind}/>
+  let mut title ← htmlWithDoc tac kind
   if let some eliminator := using? then
     let const ← addMessageContextPartial (.ofConstName eliminator)
     title := .element "span" #[] #[title, <InteractiveMessage msg={← WithRpcRef.mk const}/>]
@@ -169,15 +166,17 @@ def renderInduction (fvarId : FVarId) :
       for newGoal in newGoals do
         let deps ← newGoal.getMVarDependencies
         if deps.any (mctxOld.findDecl? · |>.isNone) then
-          throwError "Failure: elimination principle {elimInfo.elimExpr} creates metavariables, \
-            so it is not suggested."
+          throwError "A new goal contains new metavariables, so this is not suggested to the user."
       let newGoals ← newGoals.mapM fun goal ↦ do
         let goal ← addMessageContextFull (.ofGoal goal)
         return <InteractiveMessage msg={← WithRpcRef.mk goal} />
-      mkInductionSuggestion stx (.element "div" #[] newGoals.toArray) induction using?
+      mkInductionHtml stx (.element "div" #[] newGoals.toArray) induction using?
     catch ex =>
       if infoview_search.debug.get (← getOptions) then
-        return some <div><InteractiveMessage msg={← WithRpcRef.mk ex.toMessageData} /></div>
+        return some <div «class»="error">
+          <div>Elimination principle {← exprToHtml elimInfo.elimExpr} failed to apply:</div>
+          <div><InteractiveMessage msg={← WithRpcRef.mk ex.toMessageData} /></div>
+          </div>
       else
         return none
   return .element "div" #[] htmls

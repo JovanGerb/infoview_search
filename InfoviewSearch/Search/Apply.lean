@@ -10,7 +10,7 @@ public import InfoviewSearch.Search.SectionState
 public meta section
 
 namespace InfoviewSearch
-open Lean Meta Widget Server ProofWidgets Jsx
+open Lean Meta ProofWidgets Jsx
 
 structure ApplyLemma where
   name : Premise
@@ -78,10 +78,9 @@ def ApplyLemma.generateSuggestion (i : ApplyInfo) (lem : ApplyLemma) :
     -- Are there lemmas where a hypothesis is marked as implicit,
     -- which we would still want to show as a new goal?
     if bi.isExplicit then
-      explicitGoals := explicitGoals.push (← ppExprTagged mvarId)
-  let htmls := if explicitGoals.isEmpty then #[.text "Goal accomplished! 🎉"] else
-    explicitGoals.map
-      (<div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={·}/> </div>)
+      explicitGoals := explicitGoals.push
+        <div> <strong className="goal-vdash">⊢ </strong> {← exprToHtml mvarId} </div>
+  let htmls := if explicitGoals.isEmpty then #[.text "Goal accomplished! 🎉"] else explicitGoals
   let filtered ←
     if !makesNewMVars then
       some <$> mkSuggestion tactic (.element "div" #[] htmls) newGoals.isEmpty
@@ -89,7 +88,7 @@ def ApplyLemma.generateSuggestion (i : ApplyInfo) (lem : ApplyLemma) :
       pure none
   let htmls := htmls.push (<div> {← lem.name.toHtml} </div>)
   let unfiltered ← mkSuggestion tactic (.element "div" #[] htmls) newGoals.isEmpty
-  let pattern ← forallTelescope (← lem.name.getType) fun _ e => ppExprTagged e
+  let pattern ← forallTelescope (← lem.name.getType) fun _ e => exprToHtml e
   return { filtered, unfiltered, key, pattern }
 
 end InfoviewSearch

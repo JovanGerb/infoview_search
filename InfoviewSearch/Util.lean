@@ -84,8 +84,6 @@ structure Context where
   computations : IO.Ref (Std.TreeSet String)
   /-- The token for updating the HTML that represents the state of the ongoing computations. -/
   statusToken : RefreshToken
-  /-- This use used by `ppTacticTagged`. -/
-  ctx : Elab.ContextInfo
   /-- The main goal. -/
   goal : MVarId
   /-- The selected hypothesis, if any. -/
@@ -258,17 +256,35 @@ def mkSuggestionList (htmls : Array Html) (header : Html) (startOpen := true) : 
     {.element "div" #[] htmls}
   </details>
 
-/-- Display `str` with a docstring as if it is the constant `n`. -/
-def ppWithDoc (str : String) (n : Name) : InfoviewSearchM CodeWithInfos := do
+/-- Turn an `Expr` into an HTML with hover info. -/
+def exprToHtml (e : Expr) : MetaM Html :=
+  return <InteractiveCode fmt={← ppExprTagged e}/>
+
+/-- Turn a constant into an HTML with hover info.
+This avoids the `@` that may appear when using `exprToHtml`. -/
+def constToHtml (n : Name) : MetaM Html :=
+  return <InteractiveMessage msg={← WithRpcRef.mk (← addMessageContextPartial (.ofConstName n))}/>
+
+/-- Display `fmt` with a docstring as if it is the constant `n`. -/
+def htmlWithDoc (fmt : Format) (n : Name) : InfoviewSearchM Html := do
   let tag := 0
   -- Hack: use `.ofCommandInfo` instead of `.ofTacticInfo` to avoid printing `n` and its type.
   -- Unfortunately, there is still a loose dangling ` : `.
   let infos := .insert ∅ tag <| .ofCommandInfo
     { elaborator := `InfoviewSearch, stx := .node .none n #[] }
-  let tt := TaggedText.prettyTagged <| .tag tag str
+  let tt := TaggedText.prettyTagged <| .tag tag fmt
+  let ctx := {
+    env           := (← getEnv)
+    mctx          := (← getMCtx)
+    options       := (← getOptions)
+    currNamespace := (← getCurrNamespace)
+    openDecls     := (← getOpenDecls)
+    fileMap       := default
+    ngen          := (← getNGen)
+  }
   -- TODO: I would love to print this using the keyword highlighting used by the editor,
   -- but I have no idea how to do this.
-  tagCodeInfos (← read).ctx infos tt
+  return <InteractiveCode fmt={← tagCodeInfos ctx infos tt} />
 
 
 /-- Pretty print a tactic with its docstring as hover info.
@@ -276,18 +292,14 @@ def ppWithDoc (str : String) (n : Name) : InfoviewSearchM CodeWithInfos := do
 I would love to print `tac` with another colour, e.g. the keyword highlighting used by the editor,
 but I have no idea how to do this.
 -/
-def ppTacticTagged (tac : TSyntax `tactic) : InfoviewSearchM CodeWithInfos := do
-  let kind := tac.1.getKind
-  let tac ← PrettyPrinter.ppTactic tac
-  ppWithDoc tac.pretty kind
+def tacticToHtml (tac : TSyntax `tactic) : InfoviewSearchM Html := do
+  htmlWithDoc (← PrettyPrinter.ppTactic tac) tac.1.getKind
 
 /-- Create a suggestion for inserting `stx` and tactic name `tac`. -/
 def mkTacticSuggestion (stx tac : TSyntax `tactic) (html : Html) (isText := false) :
     InfoviewSearchM Html := do
-  mkSuggestion stx (isText := isText) <div>
-    <div>{html}</div>
-    <div><InteractiveCode fmt={← ppTacticTagged tac}/></div>
-    </div>
+  mkSuggestion stx (isText := isText)
+    <div> <div>{html}</div> <div>{← tacticToHtml tac}</div> </div>
 
 @[inline]
 def mkIncrementalSuggestions (name : String) (k : (Html → BaseIO Unit) → InfoviewSearchM Unit) :

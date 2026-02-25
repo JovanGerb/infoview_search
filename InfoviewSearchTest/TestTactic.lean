@@ -47,17 +47,6 @@ where
     | .ok props => return props
     | .error s => throwError "An error occurred when looking at the HTML: {s}"
 
-def mkElabContextInfo : MetaM Elab.ContextInfo :=
-  return {
-    env           := (← getEnv)
-    mctx          := (← getMCtx)
-    options       := (← getOptions)
-    currNamespace := (← getCurrNamespace)
-    openDecls     := (← getOpenDecls)
-    fileMap       := default
-    ngen          := (← getNGen)
-  }
-
 scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic =>
   Elab.Tactic.withMainContext do
   let hyp? ← hyp?.mapM fun hyp ↦ return (← getLocalDeclFromUserName hyp.getId).fvarId
@@ -70,7 +59,7 @@ scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic
     | some h, some pos => pure <| .hypType h pos
     | none  , some pos => pure <| .target pos
     | some h, none     => pure <| .hyp h
-    | _     , _        => throwError "please provide a position"
+    | none  , none     => pure <| .target .root
   let mvarId ← Elab.Tactic.getMainGoal
   let text ← getFileMap
   let some cursorPos := (← getRef).getPos? | throwError "found no valid cursor position"
@@ -82,7 +71,6 @@ scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic
     onGoal := none
     stx := default
     computations := ← IO.mkRef ∅
-    ctx := ← mkElabContextInfo
     goal := mvarId
     hyp?
     pos := pos?.getD .root

@@ -12,7 +12,7 @@ public meta section
 
 namespace InfoviewSearch
 
-open Lean Meta Mathlib.Tactic Widget ProofWidgets Jsx Server
+open Lean Meta Mathlib.Tactic ProofWidgets Jsx
 
 /-- `GRewritePos` contains the ìnformation about a given subexpression position needed for
 applying a  `grw` lemma. -/
@@ -208,28 +208,25 @@ def GrwLemma.generateSuggestion (i : GrwInfo) (lem : GrwLemma) :
     replacement := ← abstractMVars replacement
   }
   let tactic ← tacticSyntax lem i proof justLemmaName
-  let mut explicitGoals := #[]
-  for (mvarId, bi) in extraGoals do
+  let mut htmls := #[<div> {← exprToHtml replacement} </div>]
+  for (mvar, bi) in extraGoals do
     -- TODO: think more carefully about which goals should be displayed
     -- Are there lemmas where a hypothesis is marked as implicit,
     -- which we would still want to show as a new goal?
     if bi.isExplicit then
-      explicitGoals := explicitGoals.push (← ppExprTagged mvarId)
-  let mut htmls := #[<div> <InteractiveCode fmt={← ppExprTagged replacement}/> </div>]
-  for extraGoal in explicitGoals do
-    htmls := htmls.push
-      <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={extraGoal}/> </div>
+      htmls := htmls.push
+        <div> <strong className="goal-vdash">⊢ </strong> {← exprToHtml mvar} </div>
   let filtered ←
     if !isRefl && !makesNewMVars then
       some <$> mkSuggestion tactic (.element "div" #[] htmls)
     else
       pure none
-  htmls := htmls.push (<div> {← lem.name.toHtml} </div>)
+  htmls := htmls.push <div> {← lem.name.toHtml} </div>
   let unfiltered ← mkSuggestion tactic (.element "div" #[] htmls)
   let pattern ← forallTelescopeReducing (← lem.name.getType) fun _ e => do
     let mkApp2 _ lhs rhs := (← instantiateMVars e).cleanupAnnotations
       | throwError "Expected relation, not {indentExpr e}"
-    ppExprTagged <| if lem.symm then rhs else lhs
+    exprToHtml <| if lem.symm then rhs else lhs
   return { filtered, unfiltered, key, pattern }
 
 end InfoviewSearch

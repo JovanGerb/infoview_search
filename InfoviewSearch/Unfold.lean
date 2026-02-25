@@ -52,7 +52,7 @@ This is implemented with `isUserFriendly`.
 
 public meta section
 
-open Lean Meta Server Widget ProofWidgets Jsx
+open Lean Meta ProofWidgets Jsx
 
 namespace InfoviewSearch.InteractiveUnfold
 
@@ -139,7 +139,7 @@ def renderUnfolds (e : Expr) (rwKind : RwKind) :
     return none
   let htmls ← results.mapM fun unfold => do
     let tactic ← tacticSyntax e unfold rwKind
-    mkSuggestion tactic <InteractiveCode fmt={← ppExprTagged unfold}/>
+    mkSuggestion tactic (← exprToHtml unfold)
   return mkSuggestionList (startOpen := false) htmls <| .text "unfold"
 
 end InfoviewSearch.InteractiveUnfold

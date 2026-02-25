@@ -40,9 +40,7 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
       if let some html ← suggestForHyp fvarId then
         token.refresh html
       else
-        let fvar ← Widget.ppExprTagged (.fvar fvarId)
-        token.refresh
-          <p> No suggestions found for hypothesis <InteractiveCode fmt={fvar}/> </p>
+        token.refresh <p> No suggestions found for hypothesis {← exprToHtml (.fvar fvarId)} </p>
       return
     | .hypValue .. =>
       token.refresh <| .text "Error: selected location is a `.hypValue`"
@@ -73,9 +71,8 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
   htmls := htmls.push searchHtml
   token.refresh (.element "div" #[] htmls)
 
-  let ppSubExpr ← Widget.ppExprTagged subExpr
   let state ← initializeWidgetState rootExpr subExpr rwKind parentDecl?
-  state.repeatRefresh ppSubExpr token'
+  state.repeatRefresh (← exprToHtml subExpr) token'
 
 @[server_rpc_method]
 public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
@@ -101,7 +98,6 @@ public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
     «meta» := doc.meta
     cursorPos := props.pos
     computations := ← IO.mkRef ∅
-    ctx := goal.ctx.val
     goal := loc.mvarId
     hyp? := loc.fvarId?
     pos := loc.pos

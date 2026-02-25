@@ -173,7 +173,7 @@ public def initializeWidgetState (rootExpr subExpr : Expr)
     cands.mapM (·.generateSuggestions .fromImport)
 
   return { sections, importTask?, header :=
-    <span> Lemma suggestions for <InteractiveCode fmt={← ppExprTagged subExpr}/>: </span> }
+    <span> Lemma suggestions for {← exprToHtml subExpr}: </span> }
 
 /-- If `state.importTask?` has been evaluated, append the result to `section`. -/
 def updateImportTask (state : WidgetState) : EIO Exception WidgetState := do
@@ -194,16 +194,16 @@ def updateWidgetState (state : WidgetState) : MetaM WidgetState := do
   return { state with sections }
 
 public def WidgetState.render (state : WidgetState)
-    (ppSubExpr : CodeWithInfos) : Html :=
+    (subExpr : Html) : Html :=
   <FilterDetails
     summary={state.header}
-    all={go false state ppSubExpr}
-    filtered={go true state ppSubExpr}
+    all={go false state subExpr}
+    filtered={go true state subExpr}
     initiallyFiltered={true} />
 where
   /-- Render all of the sections of lemma suggestions -/
   go (filter : Bool) (state : WidgetState)
-      (ppSubExpr : CodeWithInfos) : Html :=
+      (subExpr : Html) : Html :=
     let htmls := state.sections.filterMap fun
       | .rw s => s.render filter "rw"
       | .grw s => s.render filter "grw"
@@ -212,15 +212,15 @@ where
     let htmls := if state.importTask?.isNone then htmls else
       htmls.push <| .text "Imported theorems are being loaded..."
     if htmls.isEmpty then
-      <p> No lemma suggestions found for <InteractiveCode fmt={ppSubExpr}/> </p>
+      <p> No lemma suggestions found for {subExpr} </p>
     else
       .element "div" #[("style", json% {"marginLeft" : "4px"})] htmls
 
 /-- Repeatedly run `updateWidgetState` until there is an update, and then return the result. -/
 public partial def WidgetState.repeatRefresh (state : WidgetState)
-    (ppSubExpr : CodeWithInfos) (token : RefreshToken) : MetaM Unit := do
+    (subExpr : Html) (token : RefreshToken) : MetaM Unit := do
   -- If there is nothing to compute, return the final (empty) display
-  token.refresh (state.render ppSubExpr)
+  token.refresh (state.render subExpr)
   let mut state := state
   while !state.sections.all (·.isFinished) || state.importTask?.isSome do
     Core.checkSystem "infoview_search"
@@ -230,6 +230,6 @@ public partial def WidgetState.repeatRefresh (state : WidgetState)
       IO.sleep 10
       Core.checkSystem "infoview_search"
     state ← updateWidgetState state
-    token.refresh (state.render ppSubExpr)
+    token.refresh (state.render subExpr)
 
 end InfoviewSearch

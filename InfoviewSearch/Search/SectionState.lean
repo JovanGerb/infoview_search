@@ -22,8 +22,8 @@ structure Result (α : Type) where
   unfiltered : Html
   /-- `key` is used for sorting and comparing theorems. -/
   key : α
-  /-- The `pattern` of the first lemma in a section is shown in the header of that section. -/
-  pattern : CodeWithInfos
+  /-- The `pattern` of the first lemma in a section is shown as the header of that section. -/
+  pattern : Html
 deriving Inhabited
 
 instance [Ord α] : Ord (Result α) := ⟨(compare ·.key ·.key)⟩
@@ -100,7 +100,7 @@ def SectionState.update (s : SectionState α) (isDup : α → α → MetaM Bool)
 def SectionState.render (filter : Bool) (s : SectionState α) (tactic : String) : Option Html :=
   if s.results.isEmpty && s.errors.isEmpty then none else some <|
   let head :=
-    if let some head := s.results[0]? then <InteractiveCode fmt={head.pattern}/> else .text ""
+    if let some head := s.results[0]? then head.pattern else .text ""
   let suffix := match s.source with
     | .hypothesis => " (local hypotheses)"
     | .fromFile => " (lemmas from current file)"

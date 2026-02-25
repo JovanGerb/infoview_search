@@ -11,7 +11,7 @@ public import Mathlib.Tactic.ApplyAt
 public meta section
 
 namespace InfoviewSearch
-open Lean Meta Widget Server ProofWidgets Jsx
+open Lean Meta ProofWidgets Jsx
 
 structure ApplyAtLemma where
   name : Premise
@@ -74,26 +74,23 @@ def ApplyAtLemma.generateSuggestion (lem : ApplyAtLemma) (i : ApplyAtInfo) :
     newGoals := (← newGoals.mapM (abstractMVars ·.1)).push (← abstractMVars replacement)
   }
   let tactic ← tacticSyntax lem
-  let mut explicitGoals := #[]
+  let mut htmls := #[← exprToHtml replacement]
   for (goal, bi) in newGoals do
     -- TODO: think more carefully about which goals should be displayed
     -- Are there lemmas where a hypothesis is marked as implicit,
     -- which we would still want to show as a new goal?
     if bi.isExplicit then
-      explicitGoals := explicitGoals.push (← ppExprTagged goal)
-  let mut htmls := #[<InteractiveCode fmt={← ppExprTagged replacement}/>]
-  for newGoal in explicitGoals do
-    htmls := htmls.push
-      <div> <strong className="goal-vdash">⊢ </strong> <InteractiveCode fmt={newGoal}/> </div>
+      htmls := htmls.push
+        <div> <strong className="goal-vdash">⊢ </strong> {← exprToHtml goal} </div>
   let filtered ←
-    if !makesNewMVars then
-      some <$> mkSuggestion tactic (.element "div" #[] htmls)
-    else
+    if makesNewMVars then
       pure none
-  htmls := htmls.push (<div> {← lem.name.toHtml} </div>)
+    else
+      some <$> mkSuggestion tactic (.element "div" #[] htmls)
+  htmls := htmls.push <div> {← lem.name.toHtml} </div>
   let unfiltered ← mkSuggestion tactic (.element "div" #[] htmls)
   let pattern ← forallTelescopeReducing (← lem.name.getType) fun xs _ => do
-    ppExprTagged (← inferType xs.back!)
+    exprToHtml (← inferType xs.back!)
   return { filtered, unfiltered, key, pattern }
 
 end InfoviewSearch
