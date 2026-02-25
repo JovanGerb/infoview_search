@@ -15,9 +15,6 @@ open Lean Meta ProofWidgets Jsx
 structure ApplyLemma where
   name : Premise
 
-structure ApplyInfo where
-  target : Expr
-
 structure ApplyKey where
   numGoals : Nat
   nameLenght : Nat
@@ -49,11 +46,12 @@ private def tacticSyntax (proof : Expr) (useExact : Bool) : MetaM (TSyntax `tact
 
 set_option linter.style.emptyLine false in
 /-- Generate a suggestion for applying `lem`. -/
-def ApplyLemma.generateSuggestion (i : ApplyInfo) (lem : ApplyLemma) :
+def ApplyLemma.generateSuggestion (lem : ApplyLemma) :
     InfoviewSearchM (Result ApplyKey) :=
   withReducible do withNewMCtxDepth do
   let (proof, mvars, binderInfos, e) ← lem.name.forallMetaTelescopeReducing
-  unless ← isDefEq e i.target do throwError "{e} does not unify with {i.target}"
+  let target ← (← read).goal.getType
+  unless ← isDefEq e target do throwError "{e} does not unify with {target}"
   synthAppInstances `infoview_search default mvars binderInfos false false
   let mut newGoals := #[]
   for mvar in mvars, bi in binderInfos do

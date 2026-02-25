@@ -10,6 +10,7 @@ import Mathlib.Data.Nat.ModEq
 import Mathlib.Data.Set.Insert
 import InfoviewSearchTest.TestTactic
 import Mathlib.Data.Finset.Max
+import Mathlib.SetTheory.ZFC.Basic
 
 /-!
 This file tests some basic features of `#infoview_search`
@@ -226,12 +227,25 @@ example {p : Int → Prop} (z) : p z  := by
     "cases z"
   exact test_sorry
 
-example {p : Finset Int → Prop} (n) : p n  := by
-  search_test n => "induction n using Finset.induction"
+example {p : Finset Int → Prop} (s) : p s  := by
+  search_test s => "induction s using Finset.induction"
   exact test_sorry
 
+example {p : ZFSet → Prop} (s) : p s  := by
+  search_test s => "induction s using ZFSet.inductionOn"
+  exact test_sorry
+
+example {p : Nat → Prop} (n) : p n  := by
+  search_test "/1" =>
+    "induction n"
+    "induction n using Nat.strongRec"
+    "induction n using Nat.binaryRec"
+    "cases n"
+  exact test_sorry
+
+-- TODO: make induction using `Quotient.induction_on_pi` work.
+-- TODO: deduplication when multiple recursors do the same thing.
 -- TODO: paste the whole induction tactic including all match arms.
--- TODO: also if you click on a free variable in an expression, suggest induction.
 
 /-
 TODO: add tests for

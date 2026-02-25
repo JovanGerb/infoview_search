@@ -16,9 +16,6 @@ open Lean Meta ProofWidgets Jsx
 structure ApplyAtLemma where
   name : Premise
 
-structure ApplyAtInfo where
-  target : Expr
-
 structure ApplyAtKey where
   numGoals : Nat
   nameLenght : Nat
@@ -47,13 +44,15 @@ private def tacticSyntax (lem : ApplyAtLemma) : InfoviewSearchM (TSyntax `tactic
 
 set_option linter.style.emptyLine false in
 /-- Generate a suggestion for applying `lem`. -/
-def ApplyAtLemma.generateSuggestion (lem : ApplyAtLemma) (i : ApplyAtInfo) :
+def ApplyAtLemma.generateSuggestion (lem : ApplyAtLemma) :
     InfoviewSearchM (Result ApplyAtKey) :=
   withReducible do withNewMCtxDepth do
   let (_proof, mvars, binderInfos, replacement) ← lem.name.forallMetaTelescopeReducing
-  let e ← inferType mvars.back!
+  let mvar := mvars.back!
   let mvars := mvars.pop
-  unless ← isDefEq e i.target do throwError "{e} does not unify with {i.target}"
+  let fvarId := (← read).hyp?.get!
+  unless ← isDefEq mvar (.fvar fvarId) do
+    throwError "{← inferType mvar} does not unify with {← fvarId.getType}"
   synthAppInstances `infoview_search default mvars binderInfos false false
   let mut newGoals := #[]
   for mvar in mvars, bi in binderInfos do
@@ -64,7 +63,6 @@ def ApplyAtLemma.generateSuggestion (lem : ApplyAtLemma) (i : ApplyAtInfo) :
   let makesNewMVars :=
     (replacement.findMVar? (mvars.contains <| .mvar ·)).isSome ||
     newGoals.any fun goal ↦ (goal.1.findMVar? (mvars.contains <| .mvar ·)).isSome
-  -- let proof ← instantiateMVars proof
   let key := {
     numGoals := newGoals.size
     nameLenght := lem.name.length

@@ -21,8 +21,8 @@ open Lean Server Widget ProofWidgets Jsx
 inductive Candidates where
   | rw (i : RwInfo) (arr : Array RwLemma)
   | grw (i : GrwInfo) (arr : Array GrwLemma)
-  | app (i : ApplyInfo) (arr : Array ApplyLemma)
-  | appAt (i : ApplyAtInfo) (arr : Array ApplyAtLemma)
+  | app (arr : Array ApplyLemma)
+  | appAt (arr : Array ApplyAtLemma)
 
 local instance {α β cmp} [Append β] : Append (Std.TreeMap α β cmp) :=
   ⟨.mergeWith fun _ ↦ (· ++ ·)⟩
@@ -58,11 +58,9 @@ def getCandidatesAux (rootExpr subExpr : Expr) (gpos : Array GrwPos) (rwKind : R
     | _ => break
   if (← read).pos == .root then
     if (← read).hyp?.isSome then
-      cands := cands ++ (← appAt rootExpr).elts.map fun _ ↦ (·.map (.appAt <|
-        { target := rootExpr }))
+      cands := cands ++ (← appAt rootExpr).elts.map fun _ ↦ (·.map .appAt)
     else
-      cands := cands ++ (← app rootExpr).elts.map fun _ ↦ (·.map (.app <|
-        { target := rootExpr }))
+      cands := cands ++ (← app rootExpr).elts.map fun _ ↦ (·.map .app)
   return cands.foldr (init := #[]) fun _ val acc ↦ acc ++ val
 
 def getImportCandidates (rootExpr subExpr : Expr) (gpos : Array GrwPos)
@@ -119,14 +117,14 @@ def SectionsState.hasProgressed : SectionsState → BaseIO Bool
   | .rw s | .grw s | .app s | .appAt s => s.pending.anyM IO.hasFinished
 
 def Candidates.generateSuggestions (source : Source) : Candidates → InfoviewSearchM SectionsState
-  | .rw i arr => .rw <$>
-    .new source <$> arr.mapM fun lem ↦ spawnTask lem.name <| lem.generateSuggestion i
-  | .grw i arr => .grw <$>
-    .new source <$> arr.mapM fun lem ↦ spawnTask lem.name <| lem.generateSuggestion i
-  | .app i arr => .app <$>
-    .new source <$> arr.mapM fun lem ↦ spawnTask lem.name <| lem.generateSuggestion i
-  | .appAt i arr => .appAt <$>
-    .new source <$> arr.mapM fun lem ↦ spawnTask lem.name <| lem.generateSuggestion i
+  | .rw info arr => .rw <$>
+    .new source <$> arr.mapM fun lem ↦ spawnTask lem.name <| lem.generateSuggestion info
+  | .grw info arr => .grw <$>
+    .new source <$> arr.mapM fun lem ↦ spawnTask lem.name <| lem.generateSuggestion info
+  | .app arr => .app <$>
+    .new source <$> arr.mapM fun lem ↦ spawnTask lem.name lem.generateSuggestion
+  | .appAt arr => .appAt <$>
+    .new source <$> arr.mapM fun lem ↦ spawnTask lem.name lem.generateSuggestion
 
 /-- While the suggestions are computed, `WidgetState` is used to keep track of the progress.
 Initially, it contains a bunch of unfinished `Task`s, and with each round of `updateWidgetState`,
