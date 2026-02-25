@@ -263,7 +263,8 @@ def ppWithDoc (str : String) (n : Name) : InfoviewSearchM CodeWithInfos := do
   let tag := 0
   -- Hack: use `.ofCommandInfo` instead of `.ofTacticInfo` to avoid printing `n` and its type.
   -- Unfortunately, there is still a loose dangling ` : `.
-  let infos := .insert ∅ tag <| .ofCommandInfo { elaborator := `InfoviewSearch, stx := mkIdent n }
+  let infos := .insert ∅ tag <| .ofCommandInfo
+    { elaborator := `InfoviewSearch, stx := .node .none n #[] }
   let tt := TaggedText.prettyTagged <| .tag tag str
   -- TODO: I would love to print this using the keyword highlighting used by the editor,
   -- but I have no idea how to do this.
