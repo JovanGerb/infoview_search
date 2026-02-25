@@ -77,12 +77,6 @@ def getCandidates (rootExpr subExpr : Expr) (gpos : Array GrwPos)
     (getMatches pres.rw.toRefinedDiscrTree) (getMatches pres.grw.toRefinedDiscrTree)
     (getMatches pres.app.toRefinedDiscrTree) (getMatches pres.appAt.toRefinedDiscrTree)
 
-/-- Let the `#infoview_search` widget show all errors of lemmas that failed to apply. -/
-register_option infoview_search.debug : Bool := {
-  defValue := false
-  descr := "let `#infoview_search` show all lemmas that were candidates, but which failed to apply"
-}
-
 /-- Spawn a task that computes a piece of `Html` to be displayed when finished. -/
 @[specialize]
 def spawnTask {α} (premise : Premise) (k : InfoviewSearchM α) :

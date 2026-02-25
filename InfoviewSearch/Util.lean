@@ -19,6 +19,12 @@ public meta section
 
 namespace InfoviewSearch
 
+/-- Let the `#infoview_search` widget show all errors of lemmas that failed to apply. -/
+register_option infoview_search.debug : Bool := {
+  defValue := false
+  descr := "let `#infoview_search` show all lemmas that were candidates, but which failed to apply"
+}
+
 open Lean Meta ProofWidgets Jsx Server
 
 inductive Premise where
@@ -252,22 +258,27 @@ def mkSuggestionList (htmls : Array Html) (header : Html) (startOpen := true) : 
     {.element "div" #[] htmls}
   </details>
 
-/-- Pretty print a tactic with its docstring as hover info.
-
-This function is very much a hack.
-It uses the expression printing infrastructure, which wasn't meant for printing tactics.
-As a result, above the docstring, there is a loose ` : ` as if there is a term of some type there,
-but the term and type are missing.
-Also, it would be nice if the tactic could be printed in a different colour from expressions.
--/
-def ppTacticTagged (tac : TSyntax `tactic) : InfoviewSearchM CodeWithInfos := do
+/-- Display `str` with a docstring as if it is the constant `n`. -/
+def ppWithDoc (str : String) (n : Name) : InfoviewSearchM CodeWithInfos := do
   let tag := 0
-  -- Hack: use `.ofCommandInfo` instead of `.ofTacticInfo` because it is easier.
-  let infos := .insert ∅ tag <| .ofCommandInfo { elaborator := `InfoviewSearch, stx := tac }
-  let tt := TaggedText.prettyTagged <| .tag tag (← PrettyPrinter.ppTactic tac)
+  -- Hack: use `.ofCommandInfo` instead of `.ofTacticInfo` to avoid printing `n` and its type.
+  -- Unfortunately, there is still a loose dangling ` : `.
+  let infos := .insert ∅ tag <| .ofCommandInfo { elaborator := `InfoviewSearch, stx := mkIdent n }
+  let tt := TaggedText.prettyTagged <| .tag tag str
   -- TODO: I would love to print this using the keyword highlighting used by the editor,
   -- but I have no idea how to do this.
   tagCodeInfos (← read).ctx infos tt
+
+
+/-- Pretty print a tactic with its docstring as hover info.
+
+I would love to print `tac` with another colour, e.g. the keyword highlighting used by the editor,
+but I have no idea how to do this.
+-/
+def ppTacticTagged (tac : TSyntax `tactic) : InfoviewSearchM CodeWithInfos := do
+  let kind := tac.1.getKind
+  let tac ← PrettyPrinter.ppTactic tac
+  ppWithDoc tac.pretty kind
 
 /-- Create a suggestion for inserting `stx` and tactic name `tac`. -/
 def mkTacticSuggestion (stx tac : TSyntax `tactic) (html : Html) (isText := false) :

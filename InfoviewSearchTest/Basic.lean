@@ -9,6 +9,7 @@ import Mathlib.Order.Basic
 import Mathlib.Data.Nat.ModEq
 import Mathlib.Data.Set.Insert
 import InfoviewSearchTest.TestTactic
+import Mathlib.Data.Finset.Max
 
 /-!
 This file tests some basic features of `#infoview_search`
@@ -209,6 +210,28 @@ example : (2 : ℚ) = 1 + 1 := by
   search_test "" => "norm_num" "norm_cast" "ring_nf"
   norm_num
 
+-- Test induction
+example {p : Nat → Prop} (n) : p n  := by
+  search_test n =>
+    "induction n"
+    "induction n using Nat.strongRec"
+    "induction n using Nat.binaryRec"
+    "cases n"
+  exact test_sorry
+
+example {p : Int → Prop} (z) : p z  := by
+  search_test z =>
+    "induction z"
+    "induction z using Int.negInduction"
+    "cases z"
+  exact test_sorry
+
+example {p : Finset Int → Prop} (n) : p n  := by
+  search_test n => "induction n using Finset.induction"
+  exact test_sorry
+
+-- TODO: paste the whole induction tactic including all match arms.
+-- TODO: also if you click on a free variable in an expression, suggest induction.
 
 /-
 TODO: add tests for
