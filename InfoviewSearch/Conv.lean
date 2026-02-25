@@ -156,6 +156,13 @@ where
       else -- ran out of `Expr.app` nodes
         arg 0 false <$> go expr i
 
+/--
+Given an `e : Expr` and `pos : SubExpr.Pos`, `Path.ofSubExprPos expr pos` generates
+the `Path` corresponding to traversing `pos` starting at the reference expression `e`.
+-/
+partial def Path.ofSubExprPos (expr : Expr) (pos : SubExpr.Pos) : MetaM Path :=
+  Path.ofSubExprPosArray expr pos.toArray
+
 open Lean.Parser.Tactic.Conv in
 /--
 Given a `path : Path` and `xs : TSepArray ``enterArg ","`, generate the `conv` syntax

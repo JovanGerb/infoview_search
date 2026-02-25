@@ -50,11 +50,11 @@ This is implemented with `isUserFriendly`.
 
 -/
 
-public meta section
+meta section
 
 open Lean Meta ProofWidgets Jsx
 
-namespace InfoviewSearch.InteractiveUnfold
+namespace InfoviewSearch
 
 set_option linter.style.emptyLine false in
 /-- Unfold a class projection if the instance is tagged with `@[default_instance]`.
@@ -132,7 +132,7 @@ def tacticSyntax (e eNew : Expr) (rwKind : RwKind) :
 
 /-- Render the unfolds of `e` as given by `filteredUnfolds`, with buttons at each suggestion
 for pasting the rewrite tactic. Return `none` when there are no unfolds. -/
-def renderUnfolds (e : Expr) (rwKind : RwKind) :
+public def suggestUnfold (e : Expr) (rwKind : RwKind) :
     InfoviewSearchM (Option Html) := do
   let results ← filteredUnfolds e
   if results.isEmpty then
@@ -142,4 +142,4 @@ def renderUnfolds (e : Expr) (rwKind : RwKind) :
     mkSuggestion tactic (← exprToHtml unfold)
   return mkSuggestionList (startOpen := false) htmls <| .text "unfold"
 
-end InfoviewSearch.InteractiveUnfold
+end InfoviewSearch

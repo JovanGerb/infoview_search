@@ -121,8 +121,7 @@ def classifyEliminator (fvarId : FVarId) (eliminator : Name) (induction? : Optio
 
 /-- Create a suggestion for inserting `stx` and tactic name `tac`. -/
 def mkInductionHtml (stx : TSyntax `tactic) (newGoals : Html)
-    (induction : Bool) (using? : Option Name) :
-    InfoviewSearchM Html := do
+    (induction : Bool) (using? : Option Name) : InfoviewSearchM Html := do
   -- Print the tactic without any argument (using a little syntax hack).
   let mut tac := if induction then "induction" else "cases"
   if using?.isSome then
@@ -130,15 +129,13 @@ def mkInductionHtml (stx : TSyntax `tactic) (newGoals : Html)
   let kind := if induction then ``Lean.Parser.Tactic.induction else ``Lean.Parser.Tactic.cases
   let mut title ← htmlWithDoc tac kind
   if let some eliminator := using? then
-    let const ← addMessageContextPartial (.ofConstName eliminator)
-    title := .element "span" #[] #[title, <InteractiveMessage msg={← WithRpcRef.mk const}/>]
+    title := .element "span" #[] #[title, ← constToHtml eliminator]
   mkSuggestion stx <details style={json% { "width": "100%" }}>
     <summary style={json% { "cursor" : "pointer" }}> {title} </summary>
     {newGoals}
     </details>
 
-def renderInduction (fvarId : FVarId) :
-    InfoviewSearchM Html := do
+def suggestInduction (fvarId : FVarId) : InfoviewSearchM Html := do
   let candidates ← getEliminatorCandidates fvarId
   let n := mkIdent (← fvarId.getUserName)
   let candidates ← candidates.filterMapM fun (eliminator, induction?) ↦
@@ -183,7 +180,7 @@ def renderInduction (fvarId : FVarId) :
 
 public def suggestForHyp (hyp : FVarId) : InfoviewSearchM (Option Html) := do
   let mut htmls := #[]
-  htmls := htmls.push (← renderInduction hyp)
+  htmls := htmls.push (← suggestInduction hyp)
   if htmls.isEmpty then
     return none
   return some <| .element "div" #[] htmls

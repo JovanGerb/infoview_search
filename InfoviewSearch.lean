@@ -51,20 +51,24 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
   -- TODO: instead of computing the occurrences a single time (i.e. the `n` in `nth_rw n`),
   -- compute the occurrence for each suggestion separately, to avoid inaccuracies.
   viewKAbstractSubExpr' rootExpr pos fun subExpr rwKind ↦ do
-  let hyp? ← fvarId?.mapM (·.getUserName)
-  let convPath? ←
-    if pos.isRoot then pure none else some <$> Conv.Path.ofSubExprPosArray rootExpr pos.toArray
-  let rewritingInfo := { hyp?, convPath? }
-
   let mut htmls : Array Html := #[]
+
+  if let .fvar fvarId := subExpr.cleanupAnnotations then
+    if let some html ← suggestForHyp fvarId then
+      htmls := htmls.push html
+
   if let some html ← renderTactic then
     htmls := htmls.push html
+
+  let rewritingInfo := {
+    hyp? := ← fvarId?.mapM (·.getUserName)
+    convPath? := ← if pos.isRoot then pure none else some <$> Conv.Path.ofSubExprPos rootExpr pos }
   -- We may want to think better about which order to put these suggestions in.
   htmls := htmls.push (← suggestPush subExpr rewritingInfo)
   htmls := htmls.push (← suggestSimp subExpr rewritingInfo)
   htmls := htmls.push (← suggestNormCast subExpr rewritingInfo)
   htmls := htmls.push (← suggestAlgebraicNormalization subExpr rewritingInfo)
-  if let some html ← InteractiveUnfold.renderUnfolds subExpr rwKind then
+  if let some html ← suggestUnfold subExpr rwKind then
     htmls := htmls.push html
 
   let (searchHtml, token') ← mkRefreshComponent <| .text "searching for applicable lemmas"

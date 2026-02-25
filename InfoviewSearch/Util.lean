@@ -27,47 +27,6 @@ register_option infoview_search.debug : Bool := {
 
 open Lean Meta ProofWidgets Jsx Server
 
-inductive Premise where
-  | const (declName : Name)
-  | fvar (fvarId : FVarId)
-  deriving Inhabited
-
-namespace Premise
-
-def toString : Premise → String
-  | .const name | .fvar ⟨name⟩ => name.toString
-
-def length (premise : Premise) : Nat :=
-  premise.toString.length
-
-def getType : Premise → MetaM Expr
-  | .const name => (·.type) <$> getConstInfo name
-  | .fvar fvarId => fvarId.getType
-
-def forallMetaTelescopeReducing : Premise → MetaM (Expr × Array Expr × Array BinderInfo × Expr)
-  | .const name => do
-    let thm ← mkConstWithFreshMVarLevels name
-    let result ← Meta.forallMetaTelescopeReducing (← inferType thm)
-    return (mkAppN thm result.1, result)
-  | .fvar fvarId => do
-    let decl ← fvarId.getDecl
-    let result ← Meta.forallMetaTelescopeReducing (← instantiateMVars decl.type)
-    return (mkAppN decl.toExpr result.1, result)
-
-def unresolveName : Premise → MetaM Name
-  | .const name => do
-    unresolveNameGlobalAvoidingLocals name (fullNames := getPPFullNames (← getOptions))
-  | .fvar fvarId => fvarId.getUserName
-
-def toMessageData : Premise → MessageData
-  | .const name => .ofConstName name
-  | .fvar fvarId => .ofExpr (.fvar fvarId)
-
-def toHtml (p : Premise) : MetaM Html :=
-  return <InteractiveMessage msg={← WithRpcRef.mk (← addMessageContextFull (p.toMessageData))} />
-
-end Premise
-
 /-- The information required for pasting a suggestion into the editor -/
 structure Context where
   /-- The current document -/
@@ -260,13 +219,27 @@ def mkSuggestionList (htmls : Array Html) (header : Html) (startOpen := true) : 
 def exprToHtml (e : Expr) : MetaM Html :=
   return <InteractiveCode fmt={← ppExprTagged e}/>
 
+open PrettyPrinter.Delaborator in
+
 /-- Turn a constant into an HTML with hover info.
 This avoids the `@` that may appear when using `exprToHtml`. -/
-def constToHtml (n : Name) : MetaM Html :=
-  return <InteractiveMessage msg={← WithRpcRef.mk (← addMessageContextPartial (.ofConstName n))}/>
+def constToHtml (n : Name) : MetaM Html := do
+  let delab := withOptionAtCurrPos `pp.tagAppFns true <| delabConst
+  let ⟨fmt, infos⟩ ← PrettyPrinter.ppExprWithInfos (delab := delab) (← mkConstWithLevelParams n)
+  let tt := TaggedText.prettyTagged fmt
+  let ctx := {
+    env           := (← getEnv)
+    mctx          := (← getMCtx)
+    options       := (← getOptions)
+    currNamespace := (← getCurrNamespace)
+    openDecls     := (← getOpenDecls)
+    fileMap       := default
+    ngen          := (← getNGen)
+  }
+  return <InteractiveCode fmt={← tagCodeInfos ctx infos tt}/>
 
 /-- Display `fmt` with a docstring as if it is the constant `n`. -/
-def htmlWithDoc (fmt : Format) (n : Name) : InfoviewSearchM Html := do
+def htmlWithDoc (fmt : Format) (n : Name) : MetaM Html := do
   let tag := 0
   -- Hack: use `.ofCommandInfo` instead of `.ofTacticInfo` to avoid printing `n` and its type.
   -- Unfortunately, there is still a loose dangling ` : `.
@@ -292,7 +265,7 @@ def htmlWithDoc (fmt : Format) (n : Name) : InfoviewSearchM Html := do
 I would love to print `tac` with another colour, e.g. the keyword highlighting used by the editor,
 but I have no idea how to do this.
 -/
-def tacticToHtml (tac : TSyntax `tactic) : InfoviewSearchM Html := do
+def tacticToHtml (tac : TSyntax `tactic) : MetaM Html := do
   htmlWithDoc (← PrettyPrinter.ppTactic tac) tac.1.getKind
 
 /-- Create a suggestion for inserting `stx` and tactic name `tac`. -/
@@ -345,5 +318,47 @@ def kabstractFindsPositions (e p : Expr) (targetPos : SubExpr.Pos) : MetaM Bool 
   match ← ExceptT.run <| visit e .root with
   | .ok () => throwError "invalid position {targetPos} in {e}"
   | .error found => return found
+
+inductive Premise where
+  | const (declName : Name)
+  | fvar (fvarId : FVarId)
+  deriving Inhabited
+
+namespace Premise
+
+def toString : Premise → String
+  | .const name | .fvar ⟨name⟩ => name.toString
+
+def length (premise : Premise) : Nat :=
+  premise.toString.length
+
+def getType : Premise → MetaM Expr
+  | .const name => (·.type) <$> getConstInfo name
+  | .fvar fvarId => fvarId.getType
+
+def forallMetaTelescopeReducing : Premise → MetaM (Expr × Array Expr × Array BinderInfo × Expr)
+  | .const name => do
+    let thm ← mkConstWithFreshMVarLevels name
+    let result ← Meta.forallMetaTelescopeReducing (← inferType thm)
+    return (mkAppN thm result.1, result)
+  | .fvar fvarId => do
+    let decl ← fvarId.getDecl
+    let result ← Meta.forallMetaTelescopeReducing (← instantiateMVars decl.type)
+    return (mkAppN decl.toExpr result.1, result)
+
+def unresolveName : Premise → MetaM Name
+  | .const name => do
+    unresolveNameGlobalAvoidingLocals name (fullNames := getPPFullNames (← getOptions))
+  | .fvar fvarId => fvarId.getUserName
+
+def toMessageData : Premise → MessageData
+  | .const name => .ofConstName name
+  | .fvar fvarId => .ofExpr (.fvar fvarId)
+
+def toHtml : Premise → MetaM Html
+  | .const name => constToHtml name
+  | .fvar fvarId => exprToHtml (.fvar fvarId)
+
+end Premise
 
 end InfoviewSearch

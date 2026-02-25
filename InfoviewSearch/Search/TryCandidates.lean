@@ -99,11 +99,11 @@ def spawnTask {α} (premise : Premise) (k : InfoviewSearchM α) :
         if infoview_search.debug.get (← getOptions) then
           throw ex
         return .ok none
-  BaseIO.asTask <| act.catchExceptions fun e =>
+  BaseIO.asTask <| act.catchExceptions fun ex =>
     return .error <li>
         {premiseHtml} failed:
         <br/>
-        <InteractiveMessage msg={← WithRpcRef.mk e.toMessageData} />
+        <InteractiveMessage msg={← WithRpcRef.mk ex.toMessageData} />
       </li>
 
 public inductive SectionsState where
