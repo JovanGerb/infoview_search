@@ -43,21 +43,23 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
         token.refresh <p> No suggestions found for hypothesis {← exprToHtml (.fvar fvarId)} </p>
       return
     | .hypValue .. =>
-      token.refresh <| .text "Error: selected location is a `.hypValue`"
+      token.refresh <| .text "internal infoview_search error: selected location is a `.hypValue`"
       return
   let rootExpr ← instantiateMVars <| ← match fvarId? with
     | some fvarId => fvarId.getType
     | none => loc.mvarId.getType
   -- TODO: instead of computing the occurrences a single time (i.e. the `n` in `nth_rw n`),
   -- compute the occurrence for each suggestion separately, to avoid inaccuracies.
-  viewKAbstractSubExpr' rootExpr pos fun subExpr rwKind ↦ do
+  viewKAbstractSubExpr' rootExpr pos fun subExpr rwKind ↦ trackingComputation "search" do
   let mut htmls : Array Html := #[]
 
   if let .fvar fvarId := subExpr.cleanupAnnotations then
     if let some html ← suggestForHyp fvarId then
+      markProgress
       htmls := htmls.push html
 
   if let some html ← renderTactic then
+    markProgress
     htmls := htmls.push html
 
   let rewritingInfo := {
@@ -69,11 +71,12 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
   htmls := htmls.push (← suggestNormCast subExpr rewritingInfo)
   htmls := htmls.push (← suggestAlgebraicNormalization subExpr rewritingInfo)
   if let some html ← suggestUnfold subExpr rwKind then
+    markProgress
     htmls := htmls.push html
 
   let (searchHtml, token') ← mkRefreshComponent <| .text "searching for applicable lemmas"
   htmls := htmls.push searchHtml
-  token.refresh (.element "div" #[] htmls)
+  token.refresh (.element "div" #[("style", json% {"marginLeft" : "4px"})] htmls)
 
   let state ← initializeWidgetState rootExpr subExpr rwKind parentDecl?
   state.repeatRefresh (← exprToHtml subExpr) token'
@@ -96,25 +99,27 @@ public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
       let goals := if useAfter then tacticInfo.goalsAfter else tacticInfo.goalsBefore
       goals.contains loc.mvarId
     | return .text "infoview_search: Please reload the tactic state"
-  let (statusHtml, statusToken) ← mkRefreshComponent
-  let ctx := {
-    onGoal, stx, statusToken
-    «meta» := doc.meta
-    cursorPos := props.pos
-    computations := ← IO.mkRef ∅
-    goal := loc.mvarId
-    hyp? := loc.fvarId?
-    pos := loc.pos
-  }
-  let result ← goal.ctx.val.runMetaM {} do loc.mvarId.withContext do
-    mkCancelRefreshComponent props.cancelTkRef.val (.text "searching for suggestions..")
-      (generateSuggestions loc parentDecl?) |>.run ctx
-  return <details «open»={true}>
-    <summary className="mv2 pointer">
-      infoview_search suggestions: {statusHtml}
-    </summary>
-    {result}
-  </details>
+  goal.ctx.val.runMetaM {} do loc.mvarId.withContext do
+    let (statusHtml, statusToken) ← mkRefreshComponent
+    let targetHtml ← Meta.viewSubexpr (fun _ e ↦ exprToHtml e) loc.pos (← loc.rootExpr)
+    let html ← mkCancelRefreshComponent props.cancelTkRef.val
+      (.text "infoview_search has started searching.") fun masterToken ↦ do
+      (generateSuggestions loc parentDecl? masterToken).run {
+        onGoal, stx, masterToken, statusToken
+        «meta» := doc.meta
+        cursorPos := props.pos
+        computations := ← IO.mkRef ∅
+        progress? := ← IO.mkRef false
+        goal := loc.mvarId
+        hyp? := loc.fvarId?
+        pos := loc.pos
+      }
+    return <details «open»={true}>
+      <summary className="mv2 pointer">
+        infoview_search suggestions for {targetHtml}: {statusHtml}
+      </summary>
+      {html}
+    </details>
 
 
 /-- The component called by the `#infoview_search` command. -/

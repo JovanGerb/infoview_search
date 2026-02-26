@@ -135,7 +135,7 @@ def mkInductionHtml (stx : TSyntax `tactic) (newGoals : Html)
     {newGoals}
     </details>
 
-def suggestInduction (fvarId : FVarId) : InfoviewSearchM Html := do
+def suggestInduction (fvarId : FVarId) : InfoviewSearchM (Option Html) := do
   let candidates ← getEliminatorCandidates fvarId
   let n := mkIdent (← fvarId.getUserName)
   let candidates ← candidates.filterMapM fun (eliminator, induction?) ↦
@@ -176,14 +176,17 @@ def suggestInduction (fvarId : FVarId) : InfoviewSearchM Html := do
           </div>
       else
         return none
-  return .element "div" #[] htmls
-
-public def suggestForHyp (hyp : FVarId) : InfoviewSearchM (Option Html) := do
-  let mut htmls := #[]
-  htmls := htmls.push (← suggestInduction hyp)
   if htmls.isEmpty then
     return none
   return some <| .element "div" #[] htmls
+
+public def suggestForHyp (hyp : FVarId) : InfoviewSearchM (Option Html) := do
+  suggestInduction hyp
+  -- let mut htmls := #[]
+  -- htmls := htmls.push (← suggestInduction hyp)
+  -- if htmls.isEmpty then
+  --   return none
+  -- return some <| .element "div" #[] htmls
 
 /-
 When clicking on a free variable,

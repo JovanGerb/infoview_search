@@ -65,18 +65,19 @@ scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic
   let some cursorPos := (← getRef).getPos? | throwError "found no valid cursor position"
   let cursorPos := text.utf8PosToLspPos cursorPos
   let (_, statusToken) ← mkRefreshComponent
+  let (html, masterToken) ← mkRefreshComponent
   let ctx := {
-    cursorPos, statusToken
+    cursorPos, masterToken, statusToken
     «meta» := { (default : DocumentMeta) with text }
     onGoal := none
     stx := default
     computations := ← IO.mkRef ∅
+    progress? := ← IO.mkRef false
     goal := mvarId
     hyp?
     pos := pos?.getD .root
   }
-  let (html, token) ← mkRefreshComponent
-  (generateSuggestions { loc, mvarId } none token).run ctx
+  (generateSuggestions { loc, mvarId } none masterToken).run ctx
   _ ← statusToken.refreshRef.getLast -- wait until everything is done
   let props ← getHtmlComponentProps html MakeEditLink #[]
   let suggested := props.flatMap (·.edit.edits.map (·.newText.trimAscii.toString))

@@ -41,6 +41,12 @@ structure Context where
   stx : Syntax
   /-- The ongoing computations. This is used to inform the user. -/
   computations : IO.Ref (Std.TreeSet String)
+  /-- Whether any progress has been made at all. If all computations have been finished
+  and no progress has been made, then inform the user. -/
+  progress? : IO.Ref Bool
+  /-- The token for updating the main HTML body of suggestions.
+  This is used for displaying a message that no progress has happened. -/
+  masterToken : RefreshToken
   /-- The token for updating the HTML that represents the state of the ongoing computations. -/
   statusToken : RefreshToken
   /-- The main goal. -/
@@ -52,6 +58,23 @@ structure Context where
 
 abbrev InfoviewSearchM := ReaderT Context MetaM
 
+def markProgress : InfoviewSearchM Unit := do
+  if !(← (← read).progress?.get) then
+    (← read).progress?.set true
+
+def checkProgress : InfoviewSearchM Unit := do
+  if !(← (← read).progress?.get) then
+    if (← (← read).computations.get).isEmpty then
+      (← read).masterToken.refresh <| .text "No suggestions were found."
+
+def getHypIdent? : InfoviewSearchM (Option Ident) := do
+  let some fvarId := (← read).hyp? | return none
+  return mkIdent (← fvarId.getUserName)
+
+def getHypIdent! : InfoviewSearchM Ident := do
+  let some fvarId := (← read).hyp? | throwError "no hypothesis was selected"
+  return mkIdent (← fvarId.getUserName)
+
 private def rerenderStatus : InfoviewSearchM Unit := do
   let computations ← (← read).computations.get
   (← read).statusToken.refresh <|
@@ -62,21 +85,14 @@ private def rerenderStatus : InfoviewSearchM Unit := do
       let title := "ongoing searches: " ++ String.intercalate ", " computations.toList;
       <span title={title}> {.text "⏳"} </span>
 
-def asComputation {α} (name : String) (k : InfoviewSearchM α) : InfoviewSearchM α := do
+def trackingComputation {α} (name : String) (k : InfoviewSearchM α) : InfoviewSearchM α := do
   (← read).computations.modify (·.insert name)
   rerenderStatus
   try k
   finally
     (← read).computations.modify (·.erase name)
     rerenderStatus
-
-def getHypIdent? : InfoviewSearchM (Option Ident) := do
-  let some fvarId := (← read).hyp? | return none
-  return mkIdent (← fvarId.getUserName)
-
-def getHypIdent! : InfoviewSearchM Ident := do
-  let some fvarId := (← read).hyp? | throwError "no hypothesis was selected"
-  return mkIdent (← fvarId.getUserName)
+    checkProgress
 
 section Meta
 
@@ -275,11 +291,12 @@ def mkTacticSuggestion (stx tac : TSyntax `tactic) (html : Html) (isText := fals
     <div> <div>{html}</div> <div>{← tacticToHtml tac}</div> </div>
 
 @[inline]
-def mkIncrementalSuggestions (name : String) (k : (Html → BaseIO Unit) → InfoviewSearchM Unit) :
-    InfoviewSearchM Html :=
-  mkRefreshComponentM (.text "") fun token ↦ asComputation name do
+def mkIncrementalSuggestions (name : String)
+    (k : (Html → InfoviewSearchM Unit) → InfoviewSearchM Unit) : InfoviewSearchM Html :=
+  mkRefreshComponentM (.text "") fun token ↦ trackingComputation name do
     let htmls ← IO.mkRef #[]
     k fun html ↦ do
+      markProgress
       htmls.modify (·.push html)
       token.refresh (Html.element "div" #[] (← htmls.get))
 

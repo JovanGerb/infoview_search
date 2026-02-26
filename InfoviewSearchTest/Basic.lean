@@ -268,17 +268,15 @@ TODO:
 - The filterdetails should each be focused in the relevant section
 
 - More tactic suggestions
-  - `simp`/`dsimp`. This requires integrating with `conv` mode,
-    in order to be able to simplify only subterms.
   - `contrapose(!)`/`absurd(!)` on hypothesis and `by_contra(!)` on goal?
   - `cases`/`induction`/`rcases`/`subst`
   - `ext`, `funext`
   - `congr!`, `gcongr`
-  - `infer_instance`
+  - `infer_instance`, `decide`
   - `rintro`, as a combination of `intro` and `cases`
   - `by_cases` on the selected proposition, if it is not purely in RHS of `→` or either side of `∧`
   - `specialize`/`use`?
-  -
+  - `fun_induction`/`fun_cases`?
 - Improve messages of tactic suggestions.
   - `intro` should show the new hypotheses and goal
   - `induction` should somehow show what the induction looks like.

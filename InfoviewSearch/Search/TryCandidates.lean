@@ -216,7 +216,7 @@ where
 
 /-- Repeatedly run `updateWidgetState` until there is an update, and then return the result. -/
 public partial def WidgetState.repeatRefresh (state : WidgetState)
-    (subExpr : Html) (token : RefreshToken) : MetaM Unit := do
+    (subExpr : Html) (token : RefreshToken) : InfoviewSearchM Unit := do
   -- If there is nothing to compute, return the final (empty) display
   token.refresh (state.render subExpr)
   let mut state := state
@@ -229,5 +229,6 @@ public partial def WidgetState.repeatRefresh (state : WidgetState)
       Core.checkSystem "infoview_search"
     state ← updateWidgetState state
     token.refresh (state.render subExpr)
+  markProgress -- TODO: remove this after refactoring
 
 end InfoviewSearch
