@@ -82,12 +82,12 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
 
 /-- If the set of computations is non-empty, display a `⏳` symbol with hover information that
 shows all of the ongoing computations. -/
-private def rerenderStatus (computations : Std.HashSet String) : Html :=
+private def rerenderStatus (computations : Std.HashMap String Nat) : Html :=
   if computations.isEmpty then
     .text ""
   else
     -- TODO: use a fancier throbber instead of `⏳`?
-    let title := "ongoing searches: " ++ String.intercalate ", " computations.toList;
+    let title := String.intercalate ", " computations.keys;
     <span title={title}> {.text "⏳"} </span>
 
 @[server_rpc_method]

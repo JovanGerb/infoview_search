@@ -46,7 +46,7 @@ structure Context where
   This is used for displaying a message that no progress has happened. -/
   masterToken : RefreshToken Html
   /-- The token for the HTML that represents the state of the ongoing computations. -/
-  statusToken : RefreshToken (Std.HashSet String)
+  statusToken : RefreshToken (Std.HashMap String Nat)
   /-- The main goal. -/
   goal : MVarId
   /-- The selected hypothesis, if any. -/
@@ -74,10 +74,10 @@ def getHypIdent! : InfoviewSearchM Ident := do
   return mkIdent (← fvarId.getUserName)
 
 def trackingComputation {α} (name : String) (k : InfoviewSearchM α) : InfoviewSearchM α := do
-  (← read).statusToken.modify (·.insert name)
+  (← read).statusToken.modify (·.alter name fun | none => some 0 | some n => some (n + 1))
   try k
   finally
-    (← read).statusToken.modify (·.erase name)
+    (← read).statusToken.modify (·.alter name fun | some (n + 1) => some n | _ => none)
     checkProgress
 
 section Meta

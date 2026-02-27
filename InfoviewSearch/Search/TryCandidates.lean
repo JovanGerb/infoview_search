@@ -104,7 +104,7 @@ where
       (mkSuggestion : β → InfoviewSearchM (Result α)) : InfoviewSearchM Html := do
     let (html, token) ← mkRefreshComponent {} (renderSection tactic suffix)
     let tasks ← candidates.mapM fun lem ↦ spawnTask (premise lem) (mkSuggestion lem)
-    discard <| EIO.asTask (prio := .dedicated) <| ← dropM do
+    discard <| EIO.asTask (prio := .dedicated) <| ← dropM <| trackingComputation tactic do
       forTasksM tasks fun
         | .ok (some res) => insertResult token res isDup
         | .ok none => pure ()
