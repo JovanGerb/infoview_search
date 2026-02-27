@@ -74,24 +74,41 @@ def getCandidates (rootExpr subExpr : Expr) (gpos : Array GrwPos)
     (getMatches pres.rw.toRefinedDiscrTree) (getMatches pres.grw.toRefinedDiscrTree)
     (getMatches pres.app.toRefinedDiscrTree) (getMatches pres.appAt.toRefinedDiscrTree)
 
+/-- Run `f` on the results of all tasks in the array of tasks, in an arbitrary order. -/
+@[specialize]
+private partial def forTasksM {m : Type → Type} [Monad m] [MonadLiftT BaseIO m]
+    {α : Type} (tasks : Array (Task α)) (f : α → m Unit) : m Unit := do
+  if tasks.isEmpty then return
+  if ← ↑(tasks.anyM IO.hasFinished) then
+    let tasks ← tasks.filterM fun task ↦ do
+      let finished ← IO.hasFinished task
+      if finished then
+        f task.get
+      return !finished
+    forTasksM tasks f
+  else
+    IO.sleep 10
+    forTasksM tasks f
+
 /-- Spawn tasks for the given candidate premises and
 return an HTML that shows the incoming results -/
 def runSuggestions (suffix : String) : Candidates → InfoviewSearchM Html
-  | .rw info arr => do
-    let (html, token) ← mkRefreshComponent {} (renderSection "rw" suffix)
-    arr.forM fun lem ↦ runSuggestion lem.name token (·.isDuplicate ·) (lem.try info)
-    return html
-  | .grw info arr => do
-    let (html, token) ← mkRefreshComponent {} (renderSection "grw" suffix)
-    arr.forM fun lem ↦ runSuggestion lem.name token (·.isDuplicate ·) (lem.try info)
-    return html
-  | .app arr => do
-    let (html, token) ← mkRefreshComponent {} (renderSection "apply" suffix)
-    arr.forM fun lem ↦ runSuggestion lem.name token (·.isDuplicate ·) lem.try
-    return html
-  | .appAt arr => do
-    let (html, token) ← mkRefreshComponent {} (renderSection "apply at" suffix)
-    arr.forM fun lem ↦ runSuggestion lem.name token (·.isDuplicate ·) lem.try
+  | .rw info arr => go "rw" (·.isDuplicate ·) arr (·.name) (·.try info)
+  | .grw info arr => go "grw" (·.isDuplicate ·) arr (·.name) (·.try info)
+  | .app arr => go "apply" (·.isDuplicate ·) arr (·.name) (·.try)
+  | .appAt arr => go "apply at" (·.isDuplicate ·) arr (·.name) (·.try)
+where
+  @[specialize]
+  go {α β} [Ord α] [Inhabited α] (tactic : String) (isDup : α → α → MetaM Bool)
+      (candidates : Array β) (premise : β → Premise)
+      (mkSuggestion : β → InfoviewSearchM (Result α)) : InfoviewSearchM Html := do
+    let (html, token) ← mkRefreshComponent {} (renderSection tactic suffix)
+    let tasks ← candidates.mapM fun lem ↦ spawnTask (premise lem) (mkSuggestion lem)
+    discard <| EIO.asTask (prio := .dedicated) <| ← dropM do
+      forTasksM tasks fun
+        | .ok (some res) => insertResult token res isDup
+        | .ok none => pure ()
+        | .error e => SectionToken.pushError token e
     return html
 
 set_option linter.style.emptyLine false in

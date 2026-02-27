@@ -102,41 +102,33 @@ def renderSection {α} (tactic suffix : String) (s : SectionState α) : Html := 
     filtered={filtered}
     initiallyFiltered={true} />
 
-/-- Spawn a task that computes a single lemma suggestion. -/
+/-- Spawn a task that computes a piece of `Html` to be displayed when finished. -/
 @[specialize]
-def runSuggestion {α} [Ord α] [Inhabited α] (premise : Premise)
-    (sectionToken : RefreshToken (SectionState α))
-    (isDup : α → α → MetaM Bool) (mkSuggestion : InfoviewSearchM (Result α)) :
-    InfoviewSearchM Unit := do
+def spawnTask {α} (premise : Premise) (k : InfoviewSearchM α) :
+    InfoviewSearchM <| Task (Except Html (Option α)) := do
   let premiseHtml ← premise.toHtml
-  let go ← dropM do
+  let act ← dropM do
     /- Since this task may have been on the queue for a while,
     the first thing we do is check if it has been cancelled already. -/
     Core.checkInterrupted
     /- Each thread counts its own number of heartbeats, so it is important
     to use `withCurrHeartbeats` to avoid stray maxHeartbeats errors. -/
-    withCurrHeartbeats
+    withCurrHeartbeats do
       try
-        let res ← mkSuggestion
-        Core.checkInterrupted
-        insertResult sectionToken res isDup
+        return .ok (some (← k))
       catch ex =>
-        /- By default, we catch the errors from failed lemma applications,
-        because an error simply means that the lemma is not applicable.
+        /- By default, we catch the errors from failed lemma applications
         (appart from runtime exceptions, i.e. max heartbeats or max recursion depth,
         which aren't caught by the `try`-`catch` block).
-        The `infoview_search.debug` option allows the user to still see all failures. -/
+        The `infoview_search.debug` option allows the user to still see all errors. -/
         if infoview_search.debug.get (← getOptions) then
           throw ex
-  let go := go.catchExceptions fun ex => do
-    let error := <li>
+        return .ok none
+  BaseIO.asTask <| act.catchExceptions fun ex =>
+    return .error <li>
         {premiseHtml} failed:
         <br/>
         <InteractiveMessage msg={← Server.WithRpcRef.mk ex.toMessageData} />
       </li>
-    sectionToken.modify fun s ↦ { s with errors := s.errors.push error }
-  discard <| BaseIO.asTask go
-
-
 
 end InfoviewSearch
