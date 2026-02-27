@@ -6,6 +6,7 @@ Authors: Jovan Gerbscheid
 module
 
 public import InfoviewSearch.Util
+public import ProofWidgets.Component.FilterDetails
 
 public meta section
 
@@ -14,7 +15,7 @@ open Lean Widget ProofWidgets Jsx
 
 variable {α : Type} [Ord α] [Inhabited α]
 
-/-- `Result` stores the information from a rewrite lemma that was successful. -/
+/-- `Result` stores the information from a lemma that was successfully applied. -/
 structure Result (α : Type) where
   /-- `filtered` will be shown in the filtered view. -/
   filtered : Option Html
@@ -31,30 +32,14 @@ instance [Ord α] : LT (Result α) := ltOfOrd
 
 /-! ### Maintaining the state of the widget -/
 
-/-- The source of a library lemma -/
-inductive Source where
-  /-- A local hypothesis -/
-  | hypothesis
-  /-- A lemma from the current file -/
-  | fromFile
-  /-- A lemma from an imported file -/
-  | fromImport
-
-/-- `SectionState` is the part of `WidgetState` corresponding to each section of suggestions. -/
 structure SectionState (α : Type) where
-  /-- Whether the rewrites are using a local hypothesis, a local theorem, or an imported theorem. -/
-  source : Source
   /-- The results of the theorems that successfully applied. -/
-  results : Array (Result α)
+  results : Array (Result α) := #[]
   /-- The results of the theorems that threw an error when trying to apply them. -/
-  errors : Array Html
-  /-- The computations for theorems that have not finished evaluating. -/
-  pending : Array (Task (Except Html (Option (Result α))))
+  errors : Array Html := #[]
+  -- TODO: add a field for ongoing computations.
+  deriving Nonempty
 
-
-def SectionState.new (source : Source) (tasks : Array (Task (Except Html (Option (Result α))))) :
-    SectionState α where
-  source; results := #[]; errors := #[]; pending := tasks
 /-- Insert the new result `res` into the array `arr` of already existing results.
 
 We maintain the invariants that `results` is sorted, and for each set of duplicate results,
@@ -78,45 +63,80 @@ where
     results.findIdxM? fun res =>
       pure res.filtered.isSome <&&> isDup res.key result.key
 
-/-- Go through the pending entries in the section state, and each of the entries that have
-finished evaluating will be added to the finished result. -/
-@[specialize]
-def SectionState.update (s : SectionState α) (isDup : α → α → MetaM Bool) :
-    MetaM (SectionState α) := do
-  let mut pending := #[]
-  let mut results := s.results
-  let mut errors := s.errors
-  for t in s.pending do
-    if !(← IO.hasFinished t) then
-      pending := pending.push t
-    else
-      match t.get with
-      | .ok (some res) => results ← res.insertInArray results isDup
-      | .ok none => pure ()
-      | .error e => errors := errors.push e
-  return ({ source := s.source, results, errors, pending })
+def insertResult (token : RefreshToken (SectionState α)) (res : Result α)
+    (isDup : α → α → MetaM Bool) : MetaM Unit := fun c₁ c₂ c₃ c₄ ↦
+  token.modifyM fun { results, errors } ↦ do
+    let results ← (res.insertInArray results isDup c₁ c₂ c₃ c₄).catchExceptions fun ex ↦ do
+      if let .internal id _ := ex then
+        if id == interruptExceptionId then
+          return default
+      panic! s!"an error occurred when checking for duplicate entries:\n\
+        {← ex.toMessageData.toString}"
+    return { results, errors }
 
-/-- Render one section of the library search results. -/
-def SectionState.render (filter : Bool) (s : SectionState α) (tactic : String) : Option Html :=
-  if s.results.isEmpty && s.errors.isEmpty then none else some <|
-  let head :=
-    if let some head := s.results[0]? then head.pattern else .text ""
-  let suffix := match s.source with
-    | .hypothesis => " (local hypotheses)"
-    | .fromFile => " (lemmas from current file)"
-    | .fromImport => ""
-  let suffix := if s.pending.isEmpty then suffix else suffix ++ " ⏳"
-  let htmls := if filter then s.results.filterMap (·.filtered) else s.results.map (·.unfiltered)
-  let htmls := if s.errors.isEmpty then htmls else htmls.push <| renderErrors s.errors
-  mkSuggestionList htmls <span> {.text s!"{tactic}: "}{head} {.text suffix} </span>
-where
-  /-- Render the error messages -/
-  renderErrors (errors : Array Html) : Html :=
-    <details «open»={true}>
-      <summary className="mv2 pointer">
-        <span «class»="error"> Failures: </span>
-      </summary>
-      {Html.element "ul" #[("style", json% { "padding-left" : "30px"})] errors}
-    </details>
+def SectionToken.pushError (token : RefreshToken (SectionState α)) (error : Html) : BaseIO Unit :=
+  token.modifyM fun { results , errors } ↦ return { results, errors := errors.push error }
+
+def renderErrors (errors : Array Html) : Html :=
+  <details «open»={true}>
+    <summary className="mv2 pointer">
+      <span «class»="error"> Failures: </span>
+    </summary>
+    {Html.element "ul" #[("style", json% { "padding-left" : "30px"})] errors}
+  </details>
+
+-- TODO: add a `⏳` with hover to show which lemmas are still busy.
+def renderSection {α} (tactic suffix : String) (s : SectionState α) : Html := Id.run do
+  let { results, errors } := s
+  if results.isEmpty && errors.isEmpty then
+    return .text ""
+  let head := if let some head := results[0]? then head.pattern else .text ""
+  let mut all := .element "div" #[] <| results.map (·.unfiltered)
+  let mut filtered := .element "div" #[] <| results.filterMap (·.filtered)
+  unless errors.isEmpty do
+    all := <div> {all} {renderErrors errors} </div>
+    filtered := <div> {filtered} {renderErrors errors} </div>
+  return <FilterDetails
+    summary={<span> {.text s!"{tactic}: "} {head} {.text suffix} </span>}
+    all={all}
+    filtered={filtered}
+    initiallyFiltered={true} />
+
+/-- Spawn a task that computes a single lemma suggestion. -/
+@[specialize]
+def runSuggestion {α} [Ord α] [Inhabited α] (premise : Premise)
+    (sectionToken : RefreshToken (SectionState α))
+    (isDup : α → α → MetaM Bool) (mkSuggestion : InfoviewSearchM (Result α)) :
+    InfoviewSearchM Unit := do
+  let premiseHtml ← premise.toHtml
+  let go ← dropM do
+    /- Since this task may have been on the queue for a while,
+    the first thing we do is check if it has been cancelled already. -/
+    Core.checkInterrupted
+    /- Each thread counts its own number of heartbeats, so it is important
+    to use `withCurrHeartbeats` to avoid stray maxHeartbeats errors. -/
+    withCurrHeartbeats
+      try
+        let res ← mkSuggestion
+        Core.checkInterrupted
+        insertResult sectionToken res isDup
+      catch ex =>
+        /- By default, we catch the errors from failed lemma applications,
+        because an error simply means that the lemma is not applicable.
+        (appart from runtime exceptions, i.e. max heartbeats or max recursion depth,
+        which aren't caught by the `try`-`catch` block).
+        The `infoview_search.debug` option allows the user to still see all failures. -/
+        if infoview_search.debug.get (← getOptions) then
+          throw ex
+  let go := go.catchExceptions fun ex => do
+    let error := <li>
+        {premiseHtml} failed:
+        <br/>
+        <InteractiveMessage msg={← Server.WithRpcRef.mk ex.toMessageData} />
+      </li>
+    sectionToken.modify fun s ↦ { s with errors := s.errors.push error }
+  discard <| BaseIO.asTask go
+
+
 
 end InfoviewSearch

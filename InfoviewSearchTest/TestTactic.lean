@@ -37,7 +37,7 @@ partial def getHtmlComponentProps {Props} [RpcEncodable Props] (html : Html) (c 
       arr ← getHtmlComponentProps props.all c arr
     if hash == RefreshComponent.javascriptHash then
       let props : RefreshComponentProps ← getProps lazy
-      arr ← getHtmlComponentProps (← props.state.val.get).curr.html c arr
+      arr ← getHtmlComponentProps (← props.state.val.getFinalHtml) c arr
     htmls.foldlM (fun arr html ↦ getHtmlComponentProps html c arr) arr
 where
   getProps {Props} [RpcEncodable Props] (lazy : LazyEncodable Json) :
@@ -45,7 +45,7 @@ where
     let (json, state) := lazy.run {}
     match rpcDecode json state with
     | .ok props => return props
-    | .error s => throwError "An error occurred when looking at the HTML: {s}"
+    | .error e => throwError "An error occurred when looking at the HTML: {e}"
 
 scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic =>
   Elab.Tactic.withMainContext do
@@ -64,21 +64,19 @@ scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic
   let text ← getFileMap
   let some cursorPos := (← getRef).getPos? | throwError "found no valid cursor position"
   let cursorPos := text.utf8PosToLspPos cursorPos
-  let (_, statusToken) ← mkRefreshComponent
-  let (html, masterToken) ← mkRefreshComponent
+  let (_, statusToken) ← mkRefreshComponent ∅ fun _ ↦ .text ""
+  let (html, masterToken) ← mkRefreshComponent (.text "") id
   let ctx := {
     cursorPos, masterToken, statusToken
     «meta» := { (default : DocumentMeta) with text }
     onGoal := none
     stx := default
-    computations := ← IO.mkRef ∅
     progress? := ← IO.mkRef false
     goal := mvarId
     hyp?
     pos := pos?.getD .root
   }
   (generateSuggestions { loc, mvarId } none masterToken).run ctx
-  _ ← statusToken.refreshRef.getLast -- wait until everything is done
   let props ← getHtmlComponentProps html MakeEditLink #[]
   let suggested := props.flatMap (·.edit.edits.map (·.newText.trimAscii.toString))
   for expected in expecteds do

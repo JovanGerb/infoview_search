@@ -6,7 +6,6 @@ Authors: Jovan Gerbscheid
 module
 
 public import InfoviewSearch.Util
-public import InfoviewSearch.RefreshComponent
 public import Mathlib.Tactic.Ring.RingNF
 public import Mathlib.Tactic.FieldSimp
 public import Mathlib.Tactic.Group
@@ -17,6 +16,7 @@ public import Mathlib.Tactic.Push
 /-!
 # Suggestions for normalization tactics
 -/
+
 meta section
 
 namespace InfoviewSearch

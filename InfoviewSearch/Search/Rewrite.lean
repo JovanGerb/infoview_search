@@ -111,7 +111,7 @@ private def tacticSyntax (lem : RwLemma) (rwKind : RwKind) (hyp? : Option Ident)
 
 set_option linter.style.emptyLine false in
 
-def RwLemma.generateSuggestion (i : RwInfo) (lem : RwLemma) : InfoviewSearchM (Result RwKey) :=
+def RwLemma.try (i : RwInfo) (lem : RwLemma) : InfoviewSearchM (Result RwKey) :=
   withReducible do withNewMCtxDepth do
   let e := i.subExpr
   let (proof, mvars, binderInfos, eqn) ← lem.name.forallMetaTelescopeReducing

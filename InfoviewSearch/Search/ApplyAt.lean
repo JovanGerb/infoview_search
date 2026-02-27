@@ -44,7 +44,7 @@ private def tacticSyntax (lem : ApplyAtLemma) : InfoviewSearchM (TSyntax `tactic
 
 set_option linter.style.emptyLine false in
 /-- Generate a suggestion for applying `lem`. -/
-def ApplyAtLemma.generateSuggestion (lem : ApplyAtLemma) :
+def ApplyAtLemma.try (lem : ApplyAtLemma) :
     InfoviewSearchM (Result ApplyAtKey) :=
   withReducible do withNewMCtxDepth do
   let (_proof, mvars, binderInfos, replacement) ← lem.name.forallMetaTelescopeReducing

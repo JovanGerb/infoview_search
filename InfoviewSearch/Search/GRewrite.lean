@@ -166,7 +166,7 @@ private def tacticSyntax (lem : GrwLemma) (i : GrwInfo) (proof : Expr) (justLemm
 
 set_option linter.style.emptyLine false in
 /-- Generate the suggestion for rewriting with `lem`. -/
-def GrwLemma.generateSuggestion (i : GrwInfo) (lem : GrwLemma) :
+def GrwLemma.try (i : GrwInfo) (lem : GrwLemma) :
     InfoviewSearchM (Result GrwKey) := do
   withReducible do withNewMCtxDepth do
   let mctx ← getMCtx

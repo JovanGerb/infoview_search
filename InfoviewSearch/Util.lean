@@ -39,16 +39,14 @@ structure Context where
   onGoal : Option Nat
   /-- The preceding piece of syntax. This is used for merging consecutive `rw` tactics. -/
   stx : Syntax
-  /-- The ongoing computations. This is used to inform the user. -/
-  computations : IO.Ref (Std.TreeSet String)
   /-- Whether any progress has been made at all. If all computations have been finished
   and no progress has been made, then inform the user. -/
   progress? : IO.Ref Bool
   /-- The token for updating the main HTML body of suggestions.
   This is used for displaying a message that no progress has happened. -/
-  masterToken : RefreshToken
-  /-- The token for updating the HTML that represents the state of the ongoing computations. -/
-  statusToken : RefreshToken
+  masterToken : RefreshToken Html
+  /-- The token for the HTML that represents the state of the ongoing computations. -/
+  statusToken : RefreshToken (Std.HashSet String)
   /-- The main goal. -/
   goal : MVarId
   /-- The selected hypothesis, if any. -/
@@ -64,8 +62,8 @@ def markProgress : InfoviewSearchM Unit := do
 
 def checkProgress : InfoviewSearchM Unit := do
   if !(← (← read).progress?.get) then
-    if (← (← read).computations.get).isEmpty then
-      (← read).masterToken.refresh <| .text "No suggestions were found."
+    if (← (← read).statusToken.getCurrState).isEmpty then
+      (← read).masterToken.set <| .text "No suggestions were found."
 
 def getHypIdent? : InfoviewSearchM (Option Ident) := do
   let some fvarId := (← read).hyp? | return none
@@ -75,23 +73,11 @@ def getHypIdent! : InfoviewSearchM Ident := do
   let some fvarId := (← read).hyp? | throwError "no hypothesis was selected"
   return mkIdent (← fvarId.getUserName)
 
-private def rerenderStatus : InfoviewSearchM Unit := do
-  let computations ← (← read).computations.get
-  (← read).statusToken.refresh <|
-    if computations.isEmpty then
-      .text ""
-    else
-      -- TODO: use a fancier throbber instead of `⏳`?
-      let title := "ongoing searches: " ++ String.intercalate ", " computations.toList;
-      <span title={title}> {.text "⏳"} </span>
-
 def trackingComputation {α} (name : String) (k : InfoviewSearchM α) : InfoviewSearchM α := do
-  (← read).computations.modify (·.insert name)
-  rerenderStatus
+  (← read).statusToken.modify (·.insert name)
   try k
   finally
-    (← read).computations.modify (·.erase name)
-    rerenderStatus
+    (← read).statusToken.modify (·.erase name)
     checkProgress
 
 section Meta
@@ -298,7 +284,7 @@ def mkIncrementalSuggestions (name : String)
     k fun html ↦ do
       markProgress
       htmls.modify (·.push html)
-      token.refresh (Html.element "div" #[] (← htmls.get))
+      token.set (Html.element "div" #[] (← htmls.get))
 
 
 end Widget

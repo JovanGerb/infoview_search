@@ -28,7 +28,7 @@ def viewKAbstractSubExpr' {m α}
 set_option linter.style.emptyLine false
 
 public def generateSuggestions (loc : SubExpr.GoalsLocation)
-    (parentDecl? : Option Name) (token : RefreshToken) : InfoviewSearchM Unit := do
+    (parentDecl? : Option Name) (token : RefreshToken Html) : InfoviewSearchM Unit := do
   -- TODO: instead of just putting `✝` after inaccessible names,
   -- we should figure out how to use `rename_i` to actually refer to shadowed local variables.
   let lctx := (← getLCtx) |>.sanitizeNames.run' {options := (← getOptions)}
@@ -38,19 +38,19 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
     | .target pos => pure (none, pos)
     | .hyp fvarId =>
       if let some html ← suggestForHyp fvarId then
-        token.refresh html
+        token.set html
       else
-        token.refresh <p> No suggestions found for hypothesis {← exprToHtml (.fvar fvarId)} </p>
+        token.set <p> No suggestions found for hypothesis {← exprToHtml (.fvar fvarId)} </p>
       return
     | .hypValue .. =>
-      token.refresh <| .text "internal infoview_search error: selected location is a `.hypValue`"
+      token.set <| .text "internal infoview_search error: selected location is a `.hypValue`"
       return
   let rootExpr ← instantiateMVars <| ← match fvarId? with
     | some fvarId => fvarId.getType
     | none => loc.mvarId.getType
   -- TODO: instead of computing the occurrences a single time (i.e. the `n` in `nth_rw n`),
   -- compute the occurrence for each suggestion separately, to avoid inaccuracies.
-  viewKAbstractSubExpr' rootExpr pos fun subExpr rwKind ↦ trackingComputation "search" do
+  viewKAbstractSubExpr' rootExpr pos fun subExpr rwKind ↦ do
   let mut htmls : Array Html := #[]
 
   if let .fvar fvarId := subExpr.cleanupAnnotations then
@@ -74,12 +74,21 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
     markProgress
     htmls := htmls.push html
 
-  let (searchHtml, token') ← mkRefreshComponent <| .text "searching for applicable lemmas"
+  let (searchHtml, token') ← mkRefreshComponent (.text "") id
   htmls := htmls.push searchHtml
-  token.refresh (.element "div" #[("style", json% {"marginLeft" : "4px"})] htmls)
+  token.set (.element "div" #[("style", json% {"marginLeft" : "4px"})] htmls)
 
-  let state ← initializeWidgetState rootExpr subExpr rwKind parentDecl?
-  state.repeatRefresh (← exprToHtml subExpr) token'
+  librarySearchSuggestions rootExpr subExpr rwKind parentDecl? token'
+
+/-- If the set of computations is non-empty, display a `⏳` symbol with hover information that
+shows all of the ongoing computations. -/
+private def rerenderStatus (computations : Std.HashSet String) : Html :=
+  if computations.isEmpty then
+    .text ""
+  else
+    -- TODO: use a fancier throbber instead of `⏳`?
+    let title := "ongoing searches: " ++ String.intercalate ", " computations.toList;
+    <span title={title}> {.text "⏳"} </span>
 
 @[server_rpc_method]
 public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
@@ -100,7 +109,7 @@ public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
       goals.contains loc.mvarId
     | return .text "infoview_search: Please reload the tactic state"
   goal.ctx.val.runMetaM {} do loc.mvarId.withContext do
-    let (statusHtml, statusToken) ← mkRefreshComponent
+    let (statusHtml, statusToken) ← mkRefreshComponent ∅ rerenderStatus
     let targetHtml ← Meta.viewSubexpr (fun _ e ↦ exprToHtml e) loc.pos (← loc.rootExpr)
     let html ← mkCancelRefreshComponent props.cancelTkRef.val
       (.text "infoview_search has started searching.") fun masterToken ↦ do
@@ -108,7 +117,6 @@ public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
         onGoal, stx, masterToken, statusToken
         «meta» := doc.meta
         cursorPos := props.pos
-        computations := ← IO.mkRef ∅
         progress? := ← IO.mkRef false
         goal := loc.mvarId
         hyp? := loc.fvarId?

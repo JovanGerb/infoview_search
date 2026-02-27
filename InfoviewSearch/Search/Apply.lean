@@ -46,7 +46,7 @@ private def tacticSyntax (proof : Expr) (useExact : Bool) : MetaM (TSyntax `tact
 
 set_option linter.style.emptyLine false in
 /-- Generate a suggestion for applying `lem`. -/
-def ApplyLemma.generateSuggestion (lem : ApplyLemma) :
+def ApplyLemma.try (lem : ApplyLemma) :
     InfoviewSearchM (Result ApplyKey) :=
   withReducible do withNewMCtxDepth do
   let (proof, mvars, binderInfos, e) ← lem.name.forallMetaTelescopeReducing

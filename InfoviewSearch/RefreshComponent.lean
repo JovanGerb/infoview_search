@@ -56,30 +56,55 @@ open Lean Server Widget Jsx
 namespace RefreshComponent
 
 /-- The result that is sent to the `RefreshComponent` after each query. -/
-structure VersionedHtml where
+structure Versioned (α : Type) where
   /-- The new HTML that will replace the current HTML. -/
-  html : Html
+  val : α
   /-- The version number of the HTML. It is a count of how many HTMLs were created. -/
   idx : Nat
   deriving RpcEncodable, Nonempty
 
+@[inline]
+def Versioned.map {α β : Type} (f : α → β) (v : Versioned α) : Versioned β where
+  val := f v.val
+  idx := v.idx
+
 /-- The `RefreshState` stores the incremental result of the HTML computation. -/
-structure RefreshState where
+private structure RefreshState (σ : Type) where
   /-- The state that the widget should currently be in. -/
-  curr : VersionedHtml
+  curr : Versioned σ
   /-- A task that returns the next state for the widget.
   It is always implemented using `IO.Promise.result?`. -/
-  next : Task (Option VersionedHtml)
+  next : Task (Option (Versioned σ))
+  deriving Nonempty
+
+structure RefreshInfo (σ : Type) where
+  private ref : IO.Ref (RefreshState σ)
+  private decode : σ → Html
+  deriving Nonempty
+
+/-- Wait until the state has finished refreshing, and the return the final HTML.
+This is useful for inspecting `Html` from within Lean. -/
+partial def RefreshInfo.getFinalHtml (info : RefreshInfo σ) : BaseIO Html := do
+  let { curr, next } ← info.ref.get
+  if next.get.isNone then
+    return info.decode curr.val
+  info.getFinalHtml
+
+section RPC
+
+private opaque OpaqueStateImpl : NonemptyType.{0}
+def OpaqueState : Type := OpaqueStateImpl.type
+private instance : Nonempty OpaqueState := by exact OpaqueStateImpl.property
 
 /-- A reference to a `RefreshState`. This is used to keep track of the refresh state. -/
-abbrev RefreshRef := IO.Ref RefreshState
+abbrev OpaqueRefreshInfo := RefreshInfo OpaqueState
 
-instance : TypeName RefreshRef := unsafe .mk RefreshRef ``RefreshRef
+instance : TypeName OpaqueRefreshInfo := unsafe .mk OpaqueRefreshInfo ``OpaqueRefreshInfo
 
 /-- The data used to call `awaitRefresh`, for updating the HTML display. -/
 structure AwaitRefreshParams where
   /-- The reference to the `RefreshState`. -/
-  state : WithRpcRef RefreshRef
+  state : WithRpcRef OpaqueRefreshInfo
   /-- The index of the HTML that is currently on display. -/
   oldIdx : Nat
   deriving RpcEncodable
@@ -87,15 +112,16 @@ structure AwaitRefreshParams where
 
 /-- `awaitRefresh` is called through RPC to obtain the next HTML to display. -/
 @[server_rpc_method]
-def awaitRefresh (props : AwaitRefreshParams) : RequestM (RequestTask (Option VersionedHtml)) := do
-  let { curr, next } ← props.state.val.get
+def awaitRefresh (props : AwaitRefreshParams) : RequestM (RequestTask (Option (Versioned Html))) := do
+  let { ref, decode } := props.state.val
+  let { curr, next } ← ref.get
   -- If `props.oldIdx < curr.idx`, that means that the state has updated in the meantime.
   -- So, returning `curr` will give a refresh.
   -- If `props.oldIdx = curr.idx`, then we need to await `next` to get a refresh
-  if props.oldIdx = curr.idx then
-    return .mapCheap .ok ⟨next⟩
+  if props.oldIdx != curr.idx then
+    return .pure (curr.map decode)
   else
-    return .pure curr
+    return .mapCostly (.ok <| ·.map (·.map decode)) ⟨next⟩
 
 /--
 `getCurrState` is called through RPC whenever the widget reloads.
@@ -103,15 +129,12 @@ This can be because the infoview was closed and reopened,
 or because a different expression was selected in the goal.
 -/
 @[server_rpc_method]
-def getCurrState (ref : WithRpcRef RefreshRef) : RequestM (RequestTask VersionedHtml) := do
-  return .pure (← ref.val.get).curr
+def getCurrState (ref : WithRpcRef OpaqueRefreshInfo) : RequestM (RequestTask (Versioned Html)) :=
+  RequestM.asTask do
+    let { ref, decode } := ref.val
+    return (← ref.get).curr.map decode
 
-/-- Wait until the refreshing computation has finished, and then return the final HTML. -/
-partial def RefreshRef.getLast (ref : RefreshRef) : BaseIO Html := do
-  let s ← ref.get
-  if s.next.get.isNone then
-    return s.curr.html
-  ref.getLast
+end RPC
 
 end RefreshComponent
 
@@ -120,51 +143,72 @@ open RefreshComponent
 /-- The argument passed to `RefreshComponent`. -/
 structure RefreshComponentProps where
   /-- The refresh state that is queried for updating the display. -/
-  state : WithRpcRef RefreshRef
+  state : WithRpcRef OpaqueRefreshInfo
   deriving RpcEncodable
 
 /-- Display an inital HTML, and repeatedly update the display with new HTML objects
 as they appear in `state`. A dedicated thread should be spawned in order to modify `state`. -/
 @[widget_module]
 def RefreshComponent : Component RefreshComponentProps where
-  javascript := "window;import{jsxs as e,jsx as t,Fragment as n}from\"react/jsx-runtime\";import*as r from\"react\";import a from\"react\";import{useRpcSession as o,EnvPosContext as i,useAsyncPersistent as s,mapRpcError as c,importWidgetModule as l}from\"@leanprover/infoview\";async function m(a,o,i){if(\"text\"in i)return t(n,{children:i.text});if(\"element\"in i){const[e,n,s]=i.element,c={};for(const[e,t]of n)c[e]=t;const l=await Promise.all(s.map((async e=>await m(a,o,e))));return\"hr\"===e?t(\"hr\",{}):0===l.length?r.createElement(e,c):r.createElement(e,c,l)}if(\"component\"in i){const[e,t,n,s]=i.component,c=await Promise.all(s.map((async e=>await m(a,o,e)))),f={...n,pos:o},u=await l(a,o,e);if(!(t in u))throw new Error(`Module '${e}' does not export '${t}'`);return 0===c.length?r.createElement(u[t],f):r.createElement(u[t],f,c)}return e(\"span\",{className:\"red\",children:[\"Unknown HTML variant: \",JSON.stringify(i)]})}function f({html:a}){const l=o(),f=r.useContext(i),u=s((()=>m(l,f,a)),[l,f,a]);return\"resolved\"===u.state?u.value:\"rejected\"===u.state?e(\"span\",{className:\"red\",children:[\"Error rendering HTML: \",c(u.error).message]}):t(n,{})}function u(e){const r=o(),[i,s]=a.useState(null);return a.useEffect((()=>{let t=!1;async function n(a){const o=await r.call(\"ProofWidgets.RefreshComponent.awaitRefresh\",{oldIdx:a,state:e.state});if(!t&&o)return s(o.html),n(o.idx)}return(async()=>{const a=await r.call(\"ProofWidgets.RefreshComponent.getCurrState\",e.state);if(!t)s(a.html),n(a.idx)})(),()=>{t=!0}}),[e]),i?t(f,{html:i}):t(n,{})}export{u as default};"
+  javascript := "window;import{jsxs as e,jsx as t,Fragment as n}from\"react/jsx-runtime\";import*as r from\"react\";import a from\"react\";import{useRpcSession as o,EnvPosContext as i,useAsyncPersistent as s,mapRpcError as c,importWidgetModule as l}from\"@leanprover/infoview\";async function m(a,o,i){if(\"text\"in i)return t(n,{children:i.text});if(\"element\"in i){const[e,n,s]=i.element,c={};for(const[e,t]of n)c[e]=t;const l=await Promise.all(s.map((async e=>await m(a,o,e))));return\"hr\"===e?t(\"hr\",{}):0===l.length?r.createElement(e,c):r.createElement(e,c,l)}if(\"component\"in i){const[e,t,n,s]=i.component,c=await Promise.all(s.map((async e=>await m(a,o,e)))),f={...n,pos:o},u=await l(a,o,e);if(!(t in u))throw new Error(`Module '${e}' does not export '${t}'`);return 0===c.length?r.createElement(u[t],f):r.createElement(u[t],f,c)}return e(\"span\",{className:\"red\",children:[\"Unknown HTML variant: \",JSON.stringify(i)]})}function f({val:a}){const l=o(),f=r.useContext(i),u=s((()=>m(l,f,a)),[l,f,a]);return\"resolved\"===u.state?u.value:\"rejected\"===u.state?e(\"span\",{className:\"red\",children:[\"Error rendering HTML: \",c(u.error).message]}):t(n,{})}function u(e){const r=o(),[i,s]=a.useState(null);return a.useEffect((()=>{let t=!1;async function n(a){const o=await r.call(\"ProofWidgets.RefreshComponent.awaitRefresh\",{oldIdx:a,state:e.state});if(!t&&o)return s(o.val),n(o.idx)}return(async()=>{const a=await r.call(\"ProofWidgets.RefreshComponent.getCurrState\",e.state);if(!t)s(a.val),n(a.idx)})(),()=>{t=!0}}),[e]),i?t(f,{val:i}):t(n,{})}export{u as default};"
 
 
 /-! ## API for creating a `RefreshComponent` -/
 
-/-- A `RefreshToken` allows you to update the state of the corresponding `RefreshComponent`
-using `RefreshToken.refresh`. -/
-structure RefreshToken where
+/-- A `RefreshToken` allows you to update the state of the corresponding `RefreshComponent`. -/
+structure RefreshToken (σ : Type) where
   /-- The reference that was given to the corresponding `RefreshComponent`. -/
-  refreshRef : RefreshRef
+  private refreshRef : IO.Ref (RefreshState σ)
   /-- The promise that will resolve the `next` field in `ref`.
   If we drop the reference to this structure, and hence to this promise,
   the `next` field will resolve to `none`. -/
-  private promise : IO.Ref (IO.Promise VersionedHtml)
+  private promise : IO.Ref (IO.Promise (Versioned σ))
+
+variable {σ} [Nonempty σ]
 
 /-- Create a fresh `RefreshToken` with initial HTML `initial`. -/
-private def RefreshToken.new (initial : Html := .text "") : BaseIO RefreshToken := do
+private def RefreshToken.new (initial : σ) : BaseIO (RefreshToken σ) := do
   let promise ← IO.Promise.new
   return {
-    refreshRef := ← IO.mkRef { curr := { html := initial, idx := 0 }, next := promise.result? }
+    refreshRef := ← IO.mkRef {
+      curr := { val := initial, idx := 0 }
+      next := promise.result? }
     promise := ← IO.mkRef promise }
+
+/-- Return the current state from the `RefreshToken`-/
+def RefreshToken.getCurrState (token : RefreshToken σ) : BaseIO σ  := do
+  return (← token.refreshRef.get).curr.val
 
 /-- Update the current HTML to be `html`.
 This function makes use of `ST.Ref.take` in order to be thread safe.
-That is, if multiple different threads call `RefreshToken.refresh` with the same refresh token,
+That is, if multiple different threads call this function with the same refresh token,
 a call will block other calls until it is finished. -/
-def RefreshToken.refresh (token : RefreshToken) (html : Html) : BaseIO Unit := unsafe do
+@[specialize]
+def RefreshToken.modifyM (token : RefreshToken σ)
+    (f : σ → BaseIO σ) : BaseIO Unit := unsafe do
   let { refreshRef, promise } := token
-  let idx := (← refreshRef.take).curr.idx + 1
-  (← promise.get).resolve { html, idx }
+  let { val, idx } := (← refreshRef.take).curr
+  let next := {
+    val := ← f val
+    idx := idx + 1 }
+  (← promise.get).resolve next
   let newPromise ← IO.Promise.new
   promise.set newPromise
-  refreshRef.set { curr := { html, idx }, next := newPromise.result? }
+  refreshRef.set { curr := next, next := newPromise.result? }
+
+@[specialize]
+def RefreshToken.modify (token : RefreshToken σ) (f : σ → σ) : BaseIO Unit :=
+  token.modifyM fun s ↦ return (f s)
+
+def RefreshToken.set (token : RefreshToken σ) (val : σ) : BaseIO Unit :=
+  token.modifyM fun _ ↦ return val
 
 /-- Create an HTML, together with a `RefreshToken` that can be used to update this HTML. -/
-def mkRefreshComponent (initial : Html := .text "") : BaseIO (Html × RefreshToken) := do
+def mkRefreshComponent (initial : σ) (decode : σ → Html) : BaseIO (Html × RefreshToken σ) := do
   let token ← RefreshToken.new initial
-  return (<RefreshComponent state={← WithRpcRef.mk token.refreshRef}/>, token)
+  let info : RefreshInfo σ := { ref := token.refreshRef, decode }
+  let info : RefreshInfo OpaqueState := unsafe unsafeCast info
+  return (<RefreshComponent state={← WithRpcRef.mk info}/>, token)
 
 section MonadDrop
 
@@ -200,10 +244,10 @@ variable {m} [Monad m] [MonadDrop m (EIO Exception)] [MonadLiftT BaseIO m]
 /-- Create a `RefreshComponent` using the computation `k`.
 In order to implicitly support cancellation, `m` should extend `CoreM`,
 and hence have access to a cancel token. -/
-def mkRefreshComponentM (initial : Html) (k : RefreshToken → m Unit) : m Html := do
-  let (html, token) ← mkRefreshComponent initial
+def mkRefreshComponentM (initial : Html) (k : RefreshToken Html → m Unit) : m Html := do
+  let (html, token) ← mkRefreshComponent initial id
   discard <| BaseIO.asTask (prio := .dedicated) <|
-    (← dropM <| k token).catchExceptions fun ex => token.refresh =<< do
+    (← dropM <| k token).catchExceptions fun ex => token.set =<< do
       if let .internal id _ := ex then
         if id == interruptExceptionId then
           return .text "This component was cancelled"
@@ -216,7 +260,7 @@ def mkRefreshComponentM (initial : Html) (k : RefreshToken → m Unit) : m Html 
 /-- Lazily render a piece of HTML by running the computation in a separate thread.
 As long as the computation hasn't finished, the result will show up as `initial`. -/
 def mkLazyHtml (k : m (Option Html)) (initial : Html := .text "") : m Html := do
-  mkRefreshComponentM initial (do if let some html ← k then ·.refresh html)
+  mkRefreshComponentM initial (do if let some html ← k then ·.set html)
 
 /-- Create a `RefreshComponent`. Explicitly support cancellation by creating a cancel token,
 and setting the previous cancel token. This is useful when the component depends on the selections
@@ -225,7 +269,7 @@ in the goal, so that after making a new selection, the previous computation is c
 Note: The cancel token is only set when a new computation is started.
   When the infoview is closed, this unfortunately doesn't set the cancel token. -/
 def mkCancelRefreshComponent [MonadWithReaderOf Core.Context m]
-    (cancelTkRef : IO.Ref IO.CancelToken) (initial : Html) (k : RefreshToken → m Unit) :
+    (cancelTkRef : IO.Ref IO.CancelToken) (initial : Html) (k : RefreshToken Html → m Unit) :
     m Html := do
   let cancelTk ← IO.CancelToken.new
   let oldTk ← (cancelTkRef.swap cancelTk : BaseIO _)
