@@ -85,6 +85,7 @@ section Meta
 /-- Determine whether the explicit parts of two expressions are equal,
 and the implicit parts are definitionally equal. -/
 partial def isExplicitEq (t s : Expr) : MetaM Bool := do
+  let t := t.cleanupAnnotations; let s := s.cleanupAnnotations
   if t == s then
     return true
   unless t.getAppNumArgs == s.getAppNumArgs && t.getAppFn == s.getAppFn do

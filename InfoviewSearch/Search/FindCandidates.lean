@@ -204,6 +204,17 @@ def setRefIfNone {α} [Nonempty α] (ref : IO.Ref (Option (Task (Option α)))) :
     ref.set promise.result?
     return some promise
 
+/-- The configuration used when indexing into the discrimination tree, and when looking up in it.
+
+We do not reduce projections so that e.g. `Fin.val_mk : ⟨m, h⟩.val = m` can be indexed properly.
+
+TODO?: projections should be reduced inside implicit arguments,
+because otherwise we may reject some valid matches.
+-/
+def librarySearchIndexConfig : Config where
+  transparency := .reducible
+  proj := .no
+
 public def computeImportDiscrTrees (choice : Choice) : CoreM Unit := do
   let rwProm? ← if choice.rw then setRefIfNone rwRef else pure none
   let grwProm? ← if choice.grw then setRefIfNone grwRef else pure none
@@ -216,7 +227,7 @@ public def computeImportDiscrTrees (choice : Choice) : CoreM Unit := do
     appAt := appAtProm?.isSome
   }
   unless choice.any do return
-  let (tasks, errors) ← foldEnv {} (Entries.addConst choice) 5000
+  let (tasks, errors) ← foldEnv {} librarySearchIndexConfig (Entries.addConst choice) 5000
   let pre : PreDiscrTrees := tasks.foldl (·.append ·.get) {}
   rwProm?.forM (·.resolve pre.rw.toRefinedDiscrTree)
   grwProm?.forM (·.resolve pre.grw.toRefinedDiscrTree)
@@ -227,7 +238,7 @@ public def computeImportDiscrTrees (choice : Choice) : CoreM Unit := do
 
 public def computeModuleDiscrTrees (choice : Choice) (parentDecl? : Option Name) :
     CoreM PreDiscrTrees := do
-  let (pre, errors) ← foldCurrModule {} fun entries name cinfo ↦
+  let (pre, errors) ← foldCurrModule {} librarySearchIndexConfig fun entries name cinfo ↦
     if name == parentDecl? then pure entries else entries.addConst choice name cinfo
   logImportFailures errors
   return .append {} pre
@@ -254,9 +265,11 @@ public partial def getImportMatches {α} (ref : IO.Ref (Option (Task (Option (Re
     ref.set none
     computeImportDiscrTrees { rw := true, grw := true, app := true, appAt := true }
     getImportMatches ref e
-  getMatchFinally tree e false false (promise.resolve ·)
+  withConfig (fun _ ↦ librarySearchIndexConfig) do
+    getMatchFinally tree e false false (promise.resolve ·)
 
 public def getMatches {α} (tree : RefinedDiscrTree α) (e : Expr) : MetaM (MatchResult α) := do
-  getMatch' tree e false false
+  withConfig (fun _ ↦ librarySearchIndexConfig) do
+    getMatch' tree e false false
 
 end InfoviewSearch

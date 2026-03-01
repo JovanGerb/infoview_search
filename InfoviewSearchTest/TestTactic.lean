@@ -14,8 +14,6 @@ public import ProofWidgets.Component.HtmlDisplay
 It is hard to test `#infoview_search` directly, because it emits HTML that the user interacts with.
 Instead, we define a (scoped) command `search_test {pos} => "{tac}"`, which verifies that
 if you do a `#infoview_search` at position `pos`, `tac` will be one of the suggestions.
-
-TODO: make this command a bit friendlier by trimming the whitespace off of the string
 -/
 
 public meta section
@@ -46,6 +44,9 @@ where
     match rpcDecode json state with
     | .ok props => return props
     | .error e => throwError "An error occurred when looking at the HTML: {e}"
+
+def trimWhitespace (string : String) : String :=
+  "\n".intercalate <| ((string.trimAscii.split '\n').map (·.trimAscii.toString)).toList
 
 scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic =>
   Elab.Tactic.withMainContext do
@@ -78,8 +79,9 @@ scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic
   }
   (generateSuggestions { loc, mvarId } none masterToken).run ctx
   let props ← getHtmlComponentProps html MakeEditLink #[]
-  let suggested := props.flatMap (·.edit.edits.map (·.newText.trimAscii.toString))
+  let suggested := props.flatMap (·.edit.edits.map (trimWhitespace ·.newText))
   for expected in expecteds do
+    let expected := trimWhitespace expected
     unless suggested.contains expected do
       throwError "{expected.quote} is not one of the suggestions: {suggested.map (·.quote)}"
 

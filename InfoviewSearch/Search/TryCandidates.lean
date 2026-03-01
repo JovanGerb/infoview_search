@@ -74,11 +74,13 @@ def getCandidates (rootExpr subExpr : Expr) (gpos : Array GrwPos)
     (getMatches pres.rw.toRefinedDiscrTree) (getMatches pres.grw.toRefinedDiscrTree)
     (getMatches pres.app.toRefinedDiscrTree) (getMatches pres.appAt.toRefinedDiscrTree)
 
-/-- Run `f` on the results of all tasks in the array of tasks, in an arbitrary order. -/
+/-- Run `f` on the results of all tasks in the array of tasks, in an arbitrary order.
+
+TODO: use Lean's `Mutex` to avoid the polling loop? -/
 @[specialize]
-private partial def forTasksM {m : Type → Type} [Monad m] [MonadLiftT BaseIO m]
-    {α : Type} (tasks : Array (Task α)) (f : α → m Unit) : m Unit := do
+private partial def forTasksM {α} (tasks : Array (Task α)) (f : α → MetaM Unit) : MetaM Unit := do
   if tasks.isEmpty then return
+  Core.checkInterrupted
   if ← ↑(tasks.anyM IO.hasFinished) then
     let tasks ← tasks.filterM fun task ↦ do
       let finished ← IO.hasFinished task
@@ -104,6 +106,7 @@ where
       (mkSuggestion : β → InfoviewSearchM (Result α)) : InfoviewSearchM Html := do
     let (html, token) ← mkRefreshComponent {} (renderSection tactic suffix)
     let tasks ← candidates.mapM fun lem ↦ spawnTask (premise lem) (mkSuggestion lem)
+    -- TODO: catch potential errors
     discard <| EIO.asTask (prio := .dedicated) <| ← dropM <| trackingComputation tactic do
       forTasksM tasks fun
         | .ok (some res) => insertResult token res isDup
@@ -129,7 +132,7 @@ public def librarySearchSuggestions (rootExpr subExpr : Expr)
     appAt := pos == .root && fvarId?.isSome
   }
 
-  token.set <div> looking for local hypotheses... </div>
+  token.set <div> loading local hypotheses ⏳ </div>
   let pres ← computeLCtxDiscrTrees choice fvarId?
   Core.checkInterrupted
   for cand in ← getCandidates rootExpr subExpr gpos rwKind pres do
@@ -137,20 +140,25 @@ public def librarySearchSuggestions (rootExpr subExpr : Expr)
 
   token.set <div>
     {.element "div" #[] sections}
-    <div> looking for theorem in the current file... </div>
+    <div> loading theorem in the current file ⏳ </div>
     </div>
   let pres ← computeModuleDiscrTrees choice parentDecl?
   Core.checkInterrupted
   for cand in ← getCandidates rootExpr subExpr gpos rwKind pres do
     sections := sections.push (← runSuggestions " (lemmas from current file)" cand)
 
+  Core.checkInterrupted
   token.set <div>
     {.element "div" #[] sections}
-    <div> looking for imported theorems... </div>
+    <div> initializing discrimination trees ⏳ </div>
     </div>
-  Core.checkInterrupted
   computeImportDiscrTrees choice
   Core.checkInterrupted
+  -- TODO: more fine grained messages so that we can see if e.g. `rw` or `apply` is being loaded.
+  token.set <div>
+    {.element "div" #[] sections}
+    <div> loading imported theorems ⏳ </div>
+    </div>
   for cand in ← getImportCandidates rootExpr subExpr gpos rwKind do
     sections := sections.push (← runSuggestions "" cand)
 

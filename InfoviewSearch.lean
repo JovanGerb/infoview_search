@@ -33,6 +33,8 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
   -- we should figure out how to use `rename_i` to actually refer to shadowed local variables.
   let lctx := (← getLCtx) |>.sanitizeNames.run' {options := (← getOptions)}
   Meta.withLCtx' lctx do
+  -- Pre-emptively instantiate all metavariables, to avoid annoying issues later on.
+  instantiateMVarDeclMVars loc.mvarId
   let (fvarId?, pos) ← match loc.loc with
     | .hypType fvarId pos  => pure (some fvarId, pos)
     | .target pos => pure (none, pos)
@@ -45,7 +47,7 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
     | .hypValue .. =>
       token.set <| .text "internal infoview_search error: selected location is a `.hypValue`"
       return
-  let rootExpr ← instantiateMVars <| ← match fvarId? with
+  let rootExpr ← match fvarId? with
     | some fvarId => fvarId.getType
     | none => loc.mvarId.getType
   -- TODO: instead of computing the occurrences a single time (i.e. the `n` in `nth_rw n`),

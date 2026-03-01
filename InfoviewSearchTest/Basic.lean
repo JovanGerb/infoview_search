@@ -211,6 +211,23 @@ example : (2 : ℚ) = 1 + 1 := by
   search_test "" => "norm_num" "norm_cast" "ring_nf"
   norm_num
 
+-- test `ring`
+example {α} [CommRing α] (a b : α) : Odd a → Odd b → Odd (a * b) := by
+  rintro ⟨a, rfl⟩ ⟨b, rfl⟩
+  refine ⟨2 * a * b + b + a, ?_⟩
+  search_test "" => "ring_nf"
+  fail_if_success search_test "" => "noncomm_ring"
+  ring_nf
+
+example {α} [Ring α] (a b : α) : Odd a → Odd b → Odd (a * b) := by
+  rintro ⟨a, rfl⟩ ⟨b, rfl⟩
+  refine ⟨2 * a * b + b + a, ?_⟩
+  search_test "" => "noncomm_ring"
+  noncomm_ring
+  congr 2
+  -- TODO: this shouldn't show up
+  fail_if_success search_test "" => "norm_cast"
+
 -- Test induction
 example {p : Nat → Prop} (n) : p n  := by
   search_test n =>
@@ -242,10 +259,28 @@ example {p : Nat → Prop} (n) : p n  := by
     "induction n using Nat.binaryRec"
     "cases n"
   exact test_sorry
+/-
+TODO for the induction suggestions:
+- make induction using `Quotient.induction_on_pi` work.
+- deduplication when multiple recursors do the same thing.
+- paste the whole induction tactic including all match arms.
+-/
 
--- TODO: make induction using `Quotient.induction_on_pi` work.
--- TODO: deduplication when multiple recursors do the same thing.
--- TODO: paste the whole induction tactic including all match arms.
+-- Test that projections aren't reduced in the discrimination tree indexing:
+example (n : Nat) : n = n := by
+  fail_if_success search_test "" => "exact String.Pos.Raw.byteIdx_mk n"
+  search_test "" => "exact rfl"
+  rfl
+
+-- And hence, it is possible to suggest `Fin.val_mk` in the right scenario:
+example (n m : Nat) (h : n < m) : Fin.val ⟨n, h⟩ = n := by
+  search_test "/0/1" => "rw [Fin.val_mk]"
+    "conv =>\n enter [1]\n dsimp only"
+    "push_cast" -- Recall `push_cast` has no `conv` mode version.
+  rw [Fin.val_mk]
+
+-- TODO: pattern `a = b` vs `a = a`
+-- TODO: `CancelDenoms.derive_trans` namespace
 
 /-
 TODO: add tests for
