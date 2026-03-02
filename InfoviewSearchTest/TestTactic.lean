@@ -83,6 +83,10 @@ scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic
   for expected in expecteds do
     let expected := trimWhitespace expected
     unless suggested.contains expected do
+      Widget.savePanelWidgetInfo
+        (hash HtmlDisplayPanel.javascript)
+        (return json% { html: $(← rpcEncode html) })
+        (← getRef)
       throwError "{expected.quote} is not one of the suggestions: {suggested.map (·.quote)}"
 
 end InfoviewSearch.Test

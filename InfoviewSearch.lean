@@ -35,14 +35,14 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
   Meta.withLCtx' lctx do
   -- Pre-emptively instantiate all metavariables, to avoid annoying issues later on.
   instantiateMVarDeclMVars loc.mvarId
+  trackingComputation "infoview_search" do
   let (fvarId?, pos) ← match loc.loc with
     | .hypType fvarId pos  => pure (some fvarId, pos)
     | .target pos => pure (none, pos)
     | .hyp fvarId =>
       if let some html ← suggestForHyp fvarId then
+        markProgress
         token.set html
-      else
-        token.set <p> No suggestions found for hypothesis {← exprToHtml (.fvar fvarId)} </p>
       return
     | .hypValue .. =>
       token.set <| .text "internal infoview_search error: selected location is a `.hypValue`"
@@ -112,7 +112,11 @@ public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
     | return .text "infoview_search: Please reload the tactic state"
   goal.ctx.val.runMetaM {} do loc.mvarId.withContext do
     let (statusHtml, statusToken) ← mkRefreshComponent ∅ rerenderStatus
-    let targetHtml ← Meta.viewSubexpr (fun _ e ↦ exprToHtml e) loc.pos (← loc.rootExpr)
+    let targetHtml ←
+      if let .hyp h := loc.loc then
+        pure <span> hypothesis {← exprToHtml (.fvar h)} </span>
+      else
+        Meta.viewSubexpr (fun _ e ↦ exprToHtml e) loc.pos (← loc.rootExpr)
     let html ← mkCancelRefreshComponent props.cancelTkRef.val
       (.text "infoview_search has started searching.") fun masterToken ↦ do
       (generateSuggestions loc parentDecl? masterToken).run {

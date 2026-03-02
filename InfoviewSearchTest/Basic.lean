@@ -38,6 +38,9 @@ example (h : 0 + n = n) : n = n + 0 := by
     "rfl"
     "rw [Nat.left_eq_add]"
     "refine Nat.dvd_antisymm ?_ ?_"
+  -- TODO: this shouldn't show up
+  search_test "" =>
+    "rw [Nat.Simproc.eq_add_gt]"
   search_test h "" => "apply Nat.le.intro at h" "rw [← Nat.beq_eq] at h"
   search_test h "/0/1" => "rw [Nat.add_comm] at h"
   rfl
@@ -232,7 +235,7 @@ example {α} [Ring α] (a b : α) : Odd a → Odd b → Odd (a * b) := by
   exact test_sorry
 
 -- Test induction
-example {p : Nat → Prop} (n) : p n  := by
+example {p : Nat → Prop} (n) : p n := by
   search_test n =>
     "induction n"
     "induction n using Nat.strongRec"
@@ -240,22 +243,22 @@ example {p : Nat → Prop} (n) : p n  := by
     "cases n"
   exact test_sorry
 
-example {p : Int → Prop} (z) : p z  := by
+example {p : Int → Prop} (z) : p z := by
   search_test z =>
     "induction z"
     "induction z using Int.negInduction"
     "cases z"
   exact test_sorry
 
-example {p : Finset Int → Prop} (s) : p s  := by
+example {p : Finset Int → Prop} (s) : p s := by
   search_test s => "induction s using Finset.induction"
   exact test_sorry
 
-example {p : ZFSet → Prop} (s) : p s  := by
+example {p : ZFSet → Prop} (s) : p s := by
   search_test s => "induction s using ZFSet.inductionOn"
   exact test_sorry
 
-example {p : Nat → Prop} (n) : p n  := by
+example {p : Nat → Prop} (n) : p n := by
   search_test "/1" =>
     "induction n"
     "induction n using Nat.strongRec"

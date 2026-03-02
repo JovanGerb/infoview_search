@@ -127,7 +127,6 @@ set_option linter.style.emptyLine false in
 public def librarySearchSuggestions (rootExpr subExpr : Expr)
     (rwKind : RwKind) (parentDecl? : Option Name)
     (token : RefreshToken Html) : InfoviewSearchM Unit := do
-  trackingComputation "discrimination tree search" do
   Core.checkInterrupted
   let mut sections := #[]
 

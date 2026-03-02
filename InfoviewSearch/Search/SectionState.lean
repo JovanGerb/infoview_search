@@ -61,7 +61,10 @@ where
     unless result.filtered.isSome do
       return none
     results.findIdxM? fun res =>
-      pure res.filtered.isSome <&&> isDup res.key result.key
+      try
+        pure res.filtered.isSome <&&> isDup res.key result.key
+      catch _ =>
+        pure false
 
 def insertResult (token : RefreshToken (SectionState α)) (res : Result α)
     (isDup : α → α → MetaM Bool) : MetaM Unit := fun c₁ c₂ c₃ c₄ ↦
