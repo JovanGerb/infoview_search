@@ -258,8 +258,9 @@ def htmlWithDoc (fmt : Format) (n : Name) : MetaM Html := do
     fileMap       := default
     ngen          := (← getNGen)
   }
-  -- TODO: I would love to print this using the keyword highlighting used by the editor,
-  -- but I have no idea how to do this.
+  -- TODO: I would love to print this using the same keyword colour used by the editor,
+  -- but I don't think this is possible. Additionally, `InteractiveCode` already overwrites the
+  -- colour and style of the text (namely the expression style)
   return <InteractiveCode fmt={← tagCodeInfos ctx infos tt} />
 
 

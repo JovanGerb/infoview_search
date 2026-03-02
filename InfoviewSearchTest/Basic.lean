@@ -93,6 +93,7 @@ example {α} [Lattice α] [AddGroup α] (f : ℕ → α) (c : α)
     ∀ ε > 0, ∀ n, ∃ N > n, ∀ m ≥ N, |f N - f m| < ε := by
   intro ε hε n
   obtain ⟨N, hN, h⟩ := h ε hε n
+  -- TODO: this suggestion should not be hidden by default
   search_test "/1/1/1/1/1/1" => "grw [← h]"
   exact test_sorry
 
@@ -225,8 +226,9 @@ example {α} [Ring α] (a b : α) : Odd a → Odd b → Odd (a * b) := by
   search_test "" => "noncomm_ring"
   noncomm_ring
   congr 2
-  -- TODO: this shouldn't show up
-  fail_if_success search_test "" => "norm_cast"
+  -- TODO: this only changes the `2 : ℤ` into `2 : ℕ`. Should this somehow be made clearer?
+  search_test "" => "norm_cast"
+  exact test_sorry
 
 -- Test induction
 example {p : Nat → Prop} (n) : p n  := by
@@ -264,6 +266,9 @@ TODO for the induction suggestions:
 - make induction using `Quotient.induction_on_pi` work.
 - deduplication when multiple recursors do the same thing.
 - paste the whole induction tactic including all match arms.
+- use `rcases` instead of `cases` for non-case-splitting `cases`.
+- that also unlocks the possibility for `rintro` rather than intro
+- `rcases h with rfl` can simply be replaced by `subst h`
 -/
 
 -- Test that projections aren't reduced in the discrimination tree indexing:
@@ -300,22 +305,15 @@ TODO:
 - Allow a user-defined filter in addition to the blacklist?
 - improve `nth_rw` heuristic & add a test. Maybe, there should be a `set_option` that determines
   whether to print arguments explicitly.
-- The filterdetails should each be focused in the relevant section
 
 - More tactic suggestions
   - `contrapose(!)`/`absurd(!)` on hypothesis and `by_contra(!)` on goal?
-  - `cases`/`induction`/`rcases`/`subst`
   - `ext`, `funext`
   - `congr!`, `gcongr`
   - `infer_instance`, `decide`
-  - `rintro`, as a combination of `intro` and `cases`
   - `by_cases` on the selected proposition, if it is not purely in RHS of `→` or either side of `∧`
   - `specialize`/`use`?
   - `fun_induction`/`fun_cases`?
-- Improve messages of tactic suggestions.
-  - `intro` should show the new hypotheses and goal
-  - `induction` should somehow show what the induction looks like.
-    Then we can also give multiple different `induction`/`cases` suggestions.
 - The tactics section should be extensible via an attribute.
 
 - Improve the pasting feature: independent of where the cursor is, we want to paste the
@@ -325,7 +323,7 @@ TODO:
   - the focus dot `· `
   - being inside another tactic combinator, e.g. `induction`, `cases`, `on_goal`
 
-- Detect whether we are in `conv` mode. I don't know how to. Though the suggestions seem to
-  work just fine in conv mode
+- Detect whether we are in `conv` mode, by detecting the mdata. Though the suggestions seem to
+  work mostly fine in conv mode already.
 
 -/

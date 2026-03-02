@@ -52,7 +52,6 @@ def renderIntro (intros : Array (Name × Expr)) (goal : Expr) : InfoviewSearchM 
 /-- Give a suggestion for the `intro` tactic.
 
 TODO: suggest different depths of introducing, depending on unfolding
-TODO: suggest `rintro rfl` when applicable.
 -/
 def suggestIntro : InfoviewSearchM (Option Html) := do
   unless (← read).pos == .root && (← read).hyp?.isNone do return none
@@ -77,10 +76,8 @@ def suggestIntro : InfoviewSearchM (Option Html) := do
       let name := mkUnusedNameNumbered usedNames name
       intros := intros.push (name, decl.type)
       usedNames := usedNames.insert name
-    mkTacticSuggestion
-      (← `(tactic| intro $[$(intros.map (mkIdent ·.1))]*))
-      (← `(tactic| intro))
-      (← renderIntro intros goal)
+    let tac ← `(tactic| intro $[$(intros.map (mkIdent ·.1))]*)
+    mkTacticSuggestion tac tac (← renderIntro intros goal)
 
 def renderRfl : InfoviewSearchM (Option Html) := do
   unless (← read).pos == .root && (← read).hyp?.isNone do return none

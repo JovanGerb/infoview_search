@@ -185,12 +185,6 @@ def runNormNum (e : Expr) : MetaM Expr := do
 /--
 Create suggestions for `dsimp only`, `dsimp`, `simp`, `norm_num`.
 We only suggest a tactic if it gives a different result compared to the previous result.
-
-TODO: is it really preferred to suggest `dsimp` over `simp` when both do the same.
-And what about `dsimp only` and `dsimp`?
-
-TODO: if the simplification closes the goal, then let the user know about this explicitly,
-instead of simplifying to `True`.
 -/
 public def suggestSimp (e : Expr) (info : RewritingInfo) : InfoviewSearchM Html :=
   mkIncrementalSuggestions "simp" fun update ↦ do

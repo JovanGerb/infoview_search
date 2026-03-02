@@ -58,7 +58,6 @@ theorem Chain.card_toFinset_inter_powersetCard_eq_one
     {n m : Nat} (chain : Chain n m)
     (k : Nat) (hk : k ∈ Ico (n - m) (n + m)) :
     #(chain.toFinset ∩ powersetCard k univ) = 1 := by
-  -- TODO: discr-tree building is insanely slow here
   rw [card_eq_one]
   use chain.1 ⟨k, by grind⟩
   grind [toFinset]
@@ -67,7 +66,6 @@ theorem Chain.card_toFinset_inter_powersetCard_eq_one
 theorem Chain.card_toFinset_inter_powersetCard_le_one
     {n m : Nat} (chain : Chain n m) (k : Nat) :
     #(chain.toFinset ∩ powersetCard k univ) ≤ 1 := by
-  -- TODO: discr-tree building is insanely slow here
   rw [card_le_one]
   grind [toFinset]
 
