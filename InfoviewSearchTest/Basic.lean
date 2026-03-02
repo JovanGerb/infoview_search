@@ -93,8 +93,9 @@ example {α} [Lattice α] [AddGroup α] (f : ℕ → α) (c : α)
     ∀ ε > 0, ∀ n, ∃ N > n, ∀ m ≥ N, |f N - f m| < ε := by
   intro ε hε n
   obtain ⟨N, hN, h⟩ := h ε hε n
-  -- TODO: this suggestion should not be hidden by default
   search_test "/1/1/1/1/1/1" => "grw [← h]"
+  -- TODO: this should be suggested:
+  fail_if_success search_test "/1/1/1/1/1/1" => "grw [hε]"
   exact test_sorry
 
 example {α} [Lattice α] [AddGroup α] (f : ℕ → α) (c : α)

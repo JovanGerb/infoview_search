@@ -85,8 +85,12 @@ def renderErrors (errors : Array Html) : Html :=
     {Html.element "ul" #[("style", json% { "padding-left" : "30px"})] errors}
   </details>
 
+inductive SectionKind where
+  | hyp | currFile | imported
+
 -- TODO: add a `⏳` with hover to show which lemmas are still busy.
-def renderSection {α} (tactic suffix : String) (s : SectionState α) : Html := Id.run do
+def renderSection {α} (tactic : String) (kind : SectionKind) (s : SectionState α) : Html :=
+  Id.run do
   let { results, errors } := s
   if results.isEmpty && errors.isEmpty then
     return .text ""
@@ -96,11 +100,15 @@ def renderSection {α} (tactic suffix : String) (s : SectionState α) : Html := 
   unless errors.isEmpty do
     all := <div> {all} {renderErrors errors} </div>
     filtered := <div> {filtered} {renderErrors errors} </div>
-  return <FilterDetails
-    summary={<span> {.text s!"{tactic}: "} {head} {.text suffix} </span>}
-    all={all}
-    filtered={filtered}
-    initiallyFiltered={true} />
+  let suffix := match kind with
+    | .hyp => " (local hypotheses)"
+    | .currFile => " (current file)"
+    | .imported => ""
+  let header := <span> {.text s!"{tactic}: "} {head} {.text suffix} </span>
+  -- Don't apply any filter to local results.
+  unless kind matches .imported do
+    return <details «open»={true}> <summary> {header} </summary> {all} </details>
+  return <FilterDetails summary={header} all={all} filtered={filtered} initiallyFiltered={true} />
 
 /-- Spawn a task that computes a piece of `Html` to be displayed when finished. -/
 @[specialize]

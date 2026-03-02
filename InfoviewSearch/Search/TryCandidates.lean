@@ -100,7 +100,7 @@ private partial def forTasksM {α} (tasks : Array (Task α)) (f : α → MetaM U
 
 /-- Spawn tasks for the given candidate premises and
 return an HTML that shows the incoming results -/
-def runSuggestions (suffix : String) : Candidates → InfoviewSearchM Html
+def runSuggestions (kind : SectionKind) : Candidates → InfoviewSearchM Html
   | .rw info arr => go "rw" (·.isDuplicate ·) arr (·.name) (·.try info)
   | .grw info arr => go "grw" (·.isDuplicate ·) arr (·.name) (·.try info)
   | .app arr => go "apply" (·.isDuplicate ·) arr (·.name) (·.try)
@@ -110,7 +110,7 @@ where
   go {α β} [Ord α] [Inhabited α] (tactic : String) (isDup : α → α → MetaM Bool)
       (candidates : Array β) (premise : β → Premise)
       (mkSuggestion : β → InfoviewSearchM (Result α)) : InfoviewSearchM Html := do
-    let (html, token) ← mkRefreshComponent {} (renderSection tactic suffix)
+    let (html, token) ← mkRefreshComponent {} (renderSection tactic kind)
     let tasks ← candidates.mapM fun lem ↦ spawnTask (premise lem) (mkSuggestion lem)
     discard <| BaseIO.asTask (prio := .dedicated) <| (← dropM <| trackingComputation tactic do
       forTasksM tasks fun
@@ -146,7 +146,7 @@ public def librarySearchSuggestions (rootExpr subExpr : Expr)
   let pres ← computeLCtxDiscrTrees choice fvarId?
   Core.checkInterrupted
   for cand in ← getCandidates rootExpr subExpr gpos rwKind pres do
-    sections := sections.push (← runSuggestions " (local hypotheses)" cand)
+    sections := sections.push (← runSuggestions .hyp cand)
 
   Core.checkInterrupted
   token.set <div>
@@ -156,7 +156,7 @@ public def librarySearchSuggestions (rootExpr subExpr : Expr)
   let pres ← computeModuleDiscrTrees choice parentDecl?
   Core.checkInterrupted
   for cand in ← getCandidates rootExpr subExpr gpos rwKind pres do
-    sections := sections.push (← runSuggestions " (lemmas from current file)" cand)
+    sections := sections.push (← runSuggestions .currFile cand)
 
   Core.checkInterrupted
   token.set <div>
@@ -172,7 +172,7 @@ public def librarySearchSuggestions (rootExpr subExpr : Expr)
       <div> {.text s!"loading imported `{tac}` theorems ⏳"} </div>
       </div>
   for cand in ← getImportCandidates rootExpr subExpr gpos rwKind report do
-    sections := sections.push (← runSuggestions "" cand)
+    sections := sections.push (← runSuggestions .imported cand)
 
   token.set <div>
     {.element "div" #[] sections}
