@@ -123,7 +123,7 @@ def logImportFailures (ref : ImportErrorRef) : CoreM Unit := do
 This uses paralellism, with each thread independently folding over part of the environment.
 Hence, the result is given as an array of tasks, which can the be combined using `Array.foldl`. -/
 def foldEnv (init : α) (cfg : Config) (act : α → Name → ConstantInfo → MetaM α)
-    (constantsPerTask : Nat) : CoreM (Array (Task α) × ImportErrorRef) := do
+    (constantsPerTask : Nat := 5000) : CoreM (Array (Task α) × ImportErrorRef) := do
   let env ← getEnv
   let numModules := env.header.moduleData.size
   let mctx := { keyedConfig := cfg.toConfigWithKey }

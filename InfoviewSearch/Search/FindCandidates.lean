@@ -87,8 +87,8 @@ structure Entries where
 
 def insertEntry {α} (arr : Array (Key × LazyEntry × α)) (key : Expr) (a : α) :
     MetaM (Array (Key × LazyEntry × α)) := do
-  return (← initializeLazyEntryWithEta key).foldl (init := arr) fun arr (key, lazy) ↦
-    arr.push (key, lazy, a)
+  let entries ← initializeLazyEntryWithEta key
+  return entries.foldl (init := arr) fun arr (key, lazy) ↦ arr.push (key, lazy, a)
 
 -- TODO: make `isBadMatch` more flexible, allowing the general equalities,
 -- so that these lemmas are also in the discrimination tree.
@@ -127,22 +127,22 @@ def Entries.addConst (choice : Choice) (entries : Entries) (name : Name) (cinfo 
       if !isBadMatch e then
         appAt ← insertEntry appAt e ⟨.const name⟩
   if choice.rw || choice.grw then
-    if let mkApp2 rel lhs rhs := e then
-      let .const relName _ := rel.getAppFn | pure ()
-      -- rw
-      if relName matches ``Iff | ``Eq then
-        if choice.rw then
-          if !isBadMatch lhs then
-            rw ← insertEntry rw lhs ⟨.const name, false⟩
-          if !isBadMatch rhs && (isBadMatch lhs || !isMVarSwap lhs rhs) then
-            rw ← insertEntry rw rhs ⟨.const name, true⟩
-      -- grw
-      else
-        if choice.grw then
-          if !isBadMatch lhs then
-            grw ← insertEntry grw lhs ⟨.const name, false, relName⟩
-          if !isBadMatch rhs then
-            grw ← insertEntry grw rhs ⟨.const name, true, relName⟩
+    let mkApp2 rel lhs rhs := e | pure ()
+    let .const relName _ := rel.getAppFn | pure ()
+    -- rw
+    if relName matches ``Iff | ``Eq then
+      if choice.rw then
+        if !isBadMatch lhs then
+          rw ← insertEntry rw lhs ⟨.const name, false⟩
+        if !isBadMatch rhs && (isBadMatch lhs || !isMVarSwap lhs rhs) then
+          rw ← insertEntry rw rhs ⟨.const name, true⟩
+    -- grw
+    else
+      if choice.grw then
+        if !isBadMatch lhs then
+          grw ← insertEntry grw lhs ⟨.const name, false, relName⟩
+        if !isBadMatch rhs then
+          grw ← insertEntry grw rhs ⟨.const name, true, relName⟩
   return { rw, grw, app, appAt }
 
 /-- Given a free variable, compute what needs to be added to the various discrimination trees. -/
@@ -227,7 +227,7 @@ public def computeImportDiscrTrees (choice : Choice) : CoreM Unit := do
     appAt := appAtProm?.isSome
   }
   unless choice.any do return
-  let (tasks, errors) ← foldEnv {} librarySearchIndexConfig (Entries.addConst choice) 5000
+  let (tasks, errors) ← foldEnv {} librarySearchIndexConfig (Entries.addConst choice)
   let pre : PreDiscrTrees := tasks.foldl (·.append ·.get) {}
   rwProm?.forM (·.resolve pre.rw.toRefinedDiscrTree)
   grwProm?.forM (·.resolve pre.grw.toRefinedDiscrTree)
@@ -258,15 +258,17 @@ public partial def getImportMatches {α} (ref : IO.Ref (Option (Task (Option (Re
     ref.set none
     throwError "Internal infoview_search error: the discrimination tree was not computed"
   let promise ← IO.Promise.new
-  ref.set promise.result?
+  ref.set (some promise.result?)
   let some tree := tree.get |
     -- This happens if the reference to the promise was dropped, which should never happen.
-    (panic! "reference to discr tree promise was dropped" : BaseIO Unit)
+    (panic! "Reference to discr tree promise was dropped. Recomputing..." : BaseIO Unit)
     ref.set none
     computeImportDiscrTrees { rw := true, grw := true, app := true, appAt := true }
     getImportMatches ref e
-  withConfig (fun _ ↦ librarySearchIndexConfig) do
-    getMatchFinally tree e false false (promise.resolve ·)
+  let (result, newTree) ← withConfig (fun _ ↦ librarySearchIndexConfig) do
+    getMatchTemp tree e false false
+  promise.resolve newTree
+  return result
 
 public def getMatches {α} (tree : RefinedDiscrTree α) (e : Expr) : MetaM (MatchResult α) := do
   withConfig (fun _ ↦ librarySearchIndexConfig) do

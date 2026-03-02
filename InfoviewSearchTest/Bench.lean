@@ -30,7 +30,7 @@ open Lean
 
 def measureImport (choice : Choice) : MetaM (Nat × PreDiscrTrees) := do
   let t0 ← IO.monoMsNow
-  let (tasks, _) ← foldEnv {} (Entries.addConst choice) 5000
+  let (tasks, _) ← foldEnv {} (Entries.addConst choice)
   let pre : PreDiscrTrees := tasks.foldl (·.append ·.get) {}
   return ((← IO.monoMsNow) - t0, pre)
 

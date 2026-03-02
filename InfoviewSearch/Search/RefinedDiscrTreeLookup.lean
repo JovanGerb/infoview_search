@@ -6,6 +6,7 @@ Authors: Jovan Gerbscheid
 module
 
 public import Mathlib.Lean.Meta.RefinedDiscrTree.Lookup
+public import InfoviewSearch.RefreshComponent
 
 /-!
 # Matching with a RefinedDiscrTree
@@ -30,39 +31,60 @@ and when it is attempted to be assigned again, we check that it is the same assi
 
 -/
 
-public section
-
 namespace Lean.Meta.RefinedDiscrTree
 
 variable {α β : Type}
 
 /-- Monad for working with a `RefinedDiscrTree`. -/
-private abbrev TreeM α := StateRefT (Array (Trie α)) MetaM
+abbrev TreeM α := StateRefT (Array (Trie α)) MetaM
 
 /-- Create a new trie with the given lazy entry. -/
-private def newTrie (e : LazyEntry × α) : TreeM α TrieIndex := do
+def newTrie (e : LazyEntry × α) : TreeM α TrieIndex := do
   modifyGet fun a => (a.size, a.push (.node #[] none {} {} #[e]))
 
 /-- Add a lazy entry to an existing trie. -/
-private def addLazyEntryToTrie (i : TrieIndex) (e : LazyEntry × α) : TreeM α Unit :=
+def addLazyEntryToTrie (i : TrieIndex) (e : LazyEntry × α) : TreeM α Unit :=
   modify (·.modify i fun node => { node with pending := node.pending.push e })
+
+/-- Process a specified range of pending entries. -/
+def processPendingRange (pending : Array (LazyEntry × α)) (start stop : Nat) :
+    MetaM (Array α × Array (Key × LazyEntry × α)) :=
+  pending.foldlM (start := start) (stop := stop) (init := (#[], #[]))
+    fun (values, pending) (entry, value) ↦ do
+    if let some newEntries ← evalLazyEntry entry true then
+      return (values, newEntries.foldl (init := pending) fun pending (key, entry) ↦
+        pending.push (key, entry, value))
+    else
+      return (values.push value, pending)
 
 /--
 Evaluate the `Trie α` at index `trie`,
 replacing it with the evaluated value,
 and returning the `Trie α`.
+
+Performance note: In the `apply` search discrimination tree, after root node `⟨Eq, 3⟩`,
+there are around `150.000` entries in the `pending` array.
+To deal with this smoothly, we use paralellism.
 -/
-private def evalNode (trie : TrieIndex) : TreeM α (Trie α) := do
+def evalNode (trie : TrieIndex) : TreeM α (Trie α) := do
   let node := (← get)[trie]!
   if node.pending.isEmpty then
     return node
-  let pending ← node.pending.mapM fun (entry, value) ↦ (·, value) <$> evalLazyEntry entry true
+  let numTasks := node.pending.size / 5000 + 1
+  let tasks ← numTasks.foldM (init := #[]) fun i _ tasks ↦ do
+    return tasks.push <| ← BaseIO.asTask <| (← dropM do
+      processPendingRange node.pending (i * 5000) ((i + 1) * 5000)).catchExceptions fun ex ↦ do
+        if let .internal id _ := ex then
+          if id == interruptExceptionId then
+            return (#[], #[])
+        panic! "error while processing the discrimination tree: {← ex.toMessageData.toString}"
+  Core.checkInterrupted
   modify (·.set! trie default) -- reduce the reference count to `node` to be 1
   let mut { values, star, labelledStars, children, .. } := node
-  for (newEntries?, value) in pending do
-    let some newEntries := newEntries? | values := values.push value
-    for (key, entry) in newEntries do
-      let entry := (entry, value)
+  for task in tasks do
+    let (values', pending) := task.get
+    values := values ++ values'
+    for (key, entry) in pending do
       match key with
       | .labelledStar label =>
         if let some trie := labelledStars[label]? then
@@ -83,7 +105,7 @@ private def evalNode (trie : TrieIndex) : TreeM α (Trie α) := do
   modify (·.set! trie node)
   return node
 
-private def MatchResult.push (mr : MatchResult α) (score : Nat) (e : Array α) : MatchResult α :=
+def MatchResult.push (mr : MatchResult α) (score : Nat) (e : Array α) : MatchResult α :=
   { elts := mr.elts.alter score fun | some arr => arr.push e | none => #[e] }
 
 /-
@@ -92,7 +114,7 @@ A partial match captures the intermediate state of a match execution.
 N.B. Discrimination tree matching has non-determinism due to stars,
 so the matching loop maintains a stack of partial match results.
 -/
-private structure PartialMatch where
+structure PartialMatch where
   /-- Remaining terms to match -/
   keys : List Key
   /-- Number of non-star matches so far -/
@@ -108,7 +130,7 @@ private structure PartialMatch where
 /--
 Add to the `todo` stack all matches that result from a `.star` in the query expression.
 -/
-private partial def matchQueryStar (trie : TrieIndex) (pMatch : PartialMatch)
+partial def matchQueryStar (trie : TrieIndex) (pMatch : PartialMatch)
     (todo : Array PartialMatch) (skip : Nat := 1) : TreeM α (Array PartialMatch) := do
   match skip with
   | skip+1 =>
@@ -125,7 +147,7 @@ private partial def matchQueryStar (trie : TrieIndex) (pMatch : PartialMatch)
     return todo.push { pMatch with trie }
 
 /-- Return every value that is indexed in the tree. -/
-private def matchEverything (root : Std.HashMap Key TrieIndex) : TreeM α (MatchResult α) := do
+def matchEverything (root : Std.HashMap Key TrieIndex) : TreeM α (MatchResult α) := do
   let pMatches ← root.foldM (init := #[]) fun todo key trie =>
     matchQueryStar trie { keys := [], score := 0, trie := 0 } todo key.arity
   pMatches.foldlM (init := {}) fun result pMatch => do
@@ -133,7 +155,7 @@ private def matchEverything (root : Std.HashMap Key TrieIndex) : TreeM α (Match
     return result.push (score := 0) values
 
 /-- Add to the `todo` stack all matches that result from a `.star _` in the discrimination tree. -/
-private partial def matchTreeStars (key : Key) (node : Trie α) (pMatch : PartialMatch)
+partial def matchTreeStars (key : Key) (node : Trie α) (pMatch : PartialMatch)
     (todo : Array PartialMatch) (unify : Bool) : Array PartialMatch := Id.run do
   let { star, labelledStars, .. } := node
   if labelledStars.isEmpty && star.isNone then
@@ -179,7 +201,7 @@ where
       lHead.arity.foldM (init := (lhs, rhs)) fun _ _ (lhs, rhs) => isEq lhs rhs
 
 /-- Add to the `todo` stack the match with `key`. -/
-private def matchKey (key : Key) (children : Std.HashMap Key TrieIndex) (pMatch : PartialMatch)
+def matchKey (key : Key) (children : Std.HashMap Key TrieIndex) (pMatch : PartialMatch)
     (todo : Array PartialMatch) : Array PartialMatch :=
   if key == .opaque then todo else
   match children[key]? with
@@ -187,7 +209,7 @@ private def matchKey (key : Key) (children : Std.HashMap Key TrieIndex) (pMatch 
   | some trie => todo.push { pMatch with trie, score := pMatch.score + 1 }
 
 /-- Return the possible `Trie α` that match with `keys`. -/
-private partial def getMatchLoop (todo : Array PartialMatch) (result : MatchResult α)
+partial def getMatchLoop (todo : Array PartialMatch) (result : MatchResult α)
     (unify : Bool) : TreeM α (MatchResult α) := do
   if h : todo.size = 0 then
     return result
@@ -215,7 +237,7 @@ private partial def getMatchLoop (todo : Array PartialMatch) (result : MatchResu
         getMatchLoop todo result unify
 
 /-- Return the results from matching the pattern `[.star]` or `[.labelledStar 0]`. -/
-private def matchTreeRootStar (root : Std.HashMap Key TrieIndex) : TreeM α (MatchResult α) := do
+def matchTreeRootStar (root : Std.HashMap Key TrieIndex) : TreeM α (MatchResult α) := do
   let mut result := {}
   if let some trie := root[Key.labelledStar 0]? then
     let { values, .. } ← evalNode trie
@@ -234,7 +256,7 @@ Find values that match `e` in `d`.
 Note: to preserve the reference to `d`, `getMatch` will never throw an error,
 and instead it returns an `Except Exception (MatchResult α)`.
 -/
-private def getMatchAux (root : Std.HashMap Key TrieIndex) (e : Expr) (unify matchRootStar : Bool) :
+def getMatchAux (root : Std.HashMap Key TrieIndex) (e : Expr) (unify matchRootStar : Bool) :
     TreeM α (MatchResult α) := do
   withReducible do
     let (key, keys) ← encodeExpr e (labelledStars := false)
@@ -254,17 +276,18 @@ private def getMatchAux (root : Std.HashMap Key TrieIndex) (e : Expr) (unify mat
       else
         getMatchLoop todo {} unify
 
-def getMatch' (d : RefinedDiscrTree α) (e : Expr) (unify matchRootStar : Bool) :
+public def getMatch' (d : RefinedDiscrTree α) (e : Expr) (unify matchRootStar : Bool) :
     MetaM (MatchResult α) :=
+  -- Make sure that heartbeats don't limit us here.
+  withTheReader Core.Context ({ · with maxHeartbeats := 0 }) do
   (getMatchAux d.root e unify matchRootStar).run' d.tries
 
-def getMatchFinally (d : RefinedDiscrTree α) (e : Expr) (unify matchRootStar : Bool)
-    (finalize : RefinedDiscrTree α → MetaM Unit) : MetaM (MatchResult α) := do
-  let triesRef ← IO.mkRef d.tries
-  try
-    withTheReader Core.Context ({ · with maxHeartbeats := 0, cancelTk? := none })
-      ((getMatchAux d.root e unify matchRootStar) triesRef)
-  finally
-    finalize { d with tries := ← triesRef.get }
+-- Avoid name collision with the `getMatch` from mathlib.
+public def getMatchTemp (d : RefinedDiscrTree α) (e : Expr) (unify matchRootStar : Bool) :
+    MetaM (MatchResult α × RefinedDiscrTree α) := do
+  -- Make sure that heartbeats don't limit us here.
+  withTheReader Core.Context ({ · with maxHeartbeats := 0 }) do
+  let (result, tries) ← (getMatchAux d.root e unify matchRootStar).run d.tries
+  return (result, { d with tries })
 
 end Lean.Meta.RefinedDiscrTree

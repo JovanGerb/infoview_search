@@ -30,8 +30,9 @@ open Meta.RefinedDiscrTree in
 /-- Combine the results of looking up in various discrimination trees into an Array
 of sections of candidates, where each section corresponds to one kind of match with the
 discrimination tree. -/
-@[inline]
+@[specialize]
 def getCandidatesAux (rootExpr subExpr : Expr) (gpos : Array GrwPos) (rwKind : RwKind)
+    (report : String → BaseIO Unit)
     (rw : Expr → MetaM (MatchResult RwLemma)) (grw : Expr → MetaM (MatchResult GrwLemma))
     (app : Expr → MetaM (MatchResult ApplyLemma)) (appAt : Expr → MetaM (MatchResult ApplyAtLemma))
     : InfoviewSearchM (Array Candidates) := do
@@ -40,8 +41,10 @@ def getCandidatesAux (rootExpr subExpr : Expr) (gpos : Array GrwPos) (rwKind : R
   depends on the following insertion order.
   We choose the order `grw` => `rw` => `apply(at)`. -/
   if !gpos.isEmpty then
+    report "grw"
     cands := cands ++ (← grw subExpr).elts.map fun _ ↦ (·.map <|
       .grw { rootExpr, subExpr, rwKind, gpos })
+  report "rw"
   let mut rwExpr := subExpr
   let mut rwPos := (← read).pos
   repeat
@@ -57,20 +60,23 @@ def getCandidatesAux (rootExpr subExpr : Expr) (gpos : Array GrwPos) (rwKind : R
     | _ => break
   if (← read).pos == .root then
     if (← read).hyp?.isSome then
+      report "apply at"
       cands := cands ++ (← appAt rootExpr).elts.map fun _ ↦ (·.map .appAt)
     else
+      report "apply"
       cands := cands ++ (← app rootExpr).elts.map fun _ ↦ (·.map .app)
   return cands.foldr (init := #[]) fun _ val acc ↦ acc ++ val
 
+@[specialize]
 def getImportCandidates (rootExpr subExpr : Expr) (gpos : Array GrwPos)
-    (rwKind : RwKind) : InfoviewSearchM (Array Candidates) :=
-  getCandidatesAux rootExpr subExpr gpos rwKind
+    (rwKind : RwKind) (report : String → BaseIO Unit) : InfoviewSearchM (Array Candidates) :=
+  getCandidatesAux rootExpr subExpr gpos rwKind report
     (getImportMatches rwRef) (getImportMatches grwRef)
     (getImportMatches appRef) (getImportMatches appAtRef)
 
 def getCandidates (rootExpr subExpr : Expr) (gpos : Array GrwPos)
     (rwKind : RwKind) (pres : PreDiscrTrees) : InfoviewSearchM (Array Candidates) :=
-  getCandidatesAux rootExpr subExpr gpos rwKind
+  getCandidatesAux rootExpr subExpr gpos rwKind (fun _ ↦ pure ())
     (getMatches pres.rw.toRefinedDiscrTree) (getMatches pres.grw.toRefinedDiscrTree)
     (getMatches pres.app.toRefinedDiscrTree) (getMatches pres.appAt.toRefinedDiscrTree)
 
@@ -106,12 +112,15 @@ where
       (mkSuggestion : β → InfoviewSearchM (Result α)) : InfoviewSearchM Html := do
     let (html, token) ← mkRefreshComponent {} (renderSection tactic suffix)
     let tasks ← candidates.mapM fun lem ↦ spawnTask (premise lem) (mkSuggestion lem)
-    -- TODO: catch potential errors
-    discard <| EIO.asTask (prio := .dedicated) <| ← dropM <| trackingComputation tactic do
+    discard <| BaseIO.asTask (prio := .dedicated) <| (← dropM <| trackingComputation tactic do
       forTasksM tasks fun
         | .ok (some res) => insertResult token res isDup
         | .ok none => pure ()
-        | .error e => SectionToken.pushError token e
+        | .error e => SectionToken.pushError token e).catchExceptions fun ex ↦ do
+          if let .internal ex := ex then
+            if ex == interruptExceptionId then
+              return
+          (panic! s!"Error when processing {tactic}: {← ex.toMessageData.toString}")
     return html
 
 set_option linter.style.emptyLine false in
@@ -132,12 +141,14 @@ public def librarySearchSuggestions (rootExpr subExpr : Expr)
     appAt := pos == .root && fvarId?.isSome
   }
 
+  Core.checkInterrupted
   token.set <div> loading local hypotheses ⏳ </div>
   let pres ← computeLCtxDiscrTrees choice fvarId?
   Core.checkInterrupted
   for cand in ← getCandidates rootExpr subExpr gpos rwKind pres do
     sections := sections.push (← runSuggestions " (local hypotheses)" cand)
 
+  Core.checkInterrupted
   token.set <div>
     {.element "div" #[] sections}
     <div> loading theorem in the current file ⏳ </div>
@@ -155,11 +166,12 @@ public def librarySearchSuggestions (rootExpr subExpr : Expr)
   computeImportDiscrTrees choice
   Core.checkInterrupted
   -- TODO: more fine grained messages so that we can see if e.g. `rw` or `apply` is being loaded.
-  token.set <div>
-    {.element "div" #[] sections}
-    <div> loading imported theorems ⏳ </div>
-    </div>
-  for cand in ← getImportCandidates rootExpr subExpr gpos rwKind do
+  let report (tac : String) :=
+    token.set <div>
+      {.element "div" #[] sections}
+      <div> {.text s!"loading imported `{tac}` theorems ⏳"} </div>
+      </div>
+  for cand in ← getImportCandidates rootExpr subExpr gpos rwKind report do
     sections := sections.push (← runSuggestions "" cand)
 
   token.set <div>
