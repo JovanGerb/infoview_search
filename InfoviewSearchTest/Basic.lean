@@ -186,6 +186,15 @@ example : ∀ Nat : Nat, Nat = Nat := by
   search_test "" => "intro Nat"
   intro Nat
   rfl
+
+-- We prefer `by_contra` over `intro` when possible
+example (p : Prop) (h : ¬ p) : ¬ p := by
+  search_test => "by_contra h₁"
+  fail_if_success search_test => "intro h₁"
+  -- TODO:
+  -- search_test "h" => "contrapose h"
+  exact h
+
 -- Test `push` and `push_neg`
 example (a b c : α) (s : Set α) (h : a ∈ insert b s) : True := by
   search_test h "" => "simp at h" "push _ ∈ _ at h"

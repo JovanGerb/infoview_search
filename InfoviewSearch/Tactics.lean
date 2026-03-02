@@ -6,6 +6,7 @@ Authors: Jovan Gerbscheid
 module
 
 public import InfoviewSearch.Util
+public import Batteries.Tactic.Init
 
 import all Lean.Meta.PPGoal
 
@@ -49,15 +50,14 @@ def renderIntro (intros : Array (Name × Expr)) (goal : Expr) : InfoviewSearchM 
     </div>
   return .element "div" #[("className", Json.str "font-code tl pre-wrap")] (hyps.push goal)
 
-/-- Give a suggestion for the `intro` tactic.
-
-TODO: suggest different depths of introducing, depending on unfolding
--/
+/-- Give a suggestion for the `intro` or `by_contra` tactic. -/
 def suggestIntro : InfoviewSearchM (Option Html) := do
   unless (← read).pos == .root && (← read).hyp?.isNone do return none
-  -- Only run `whnf` on the outer most type (via `getType'`).
+  let goal ← whnfR (← (← read).goal.getType)
+  let isNot := goal.getAppFn.isConstOf ``Not
+  -- Only run `whnf` on the outer most type.
   -- If the user wants to `intro` more, they can simply do it again.
-  let goal ← (← read).goal.getType'
+  let goal ← whnfD goal
   unless goal.isForall do return none
   let usedNames : NameSet := (← getLCtx).decls.foldl (init := ∅) fun
     | s, some decl => s.insert decl.userName
@@ -76,7 +76,12 @@ def suggestIntro : InfoviewSearchM (Option Html) := do
       let name := mkUnusedNameNumbered usedNames name
       intros := intros.push (name, decl.type)
       usedNames := usedNames.insert name
-    let tac ← `(tactic| intro $[$(intros.map (mkIdent ·.1))]*)
+    let tac ←
+      -- Prefer `by_contra` over `intro` when both do the same.
+      if isNot then
+        `(tactic| by_contra $(mkIdent (intros[0]!).1))
+      else
+        `(tactic| intro $[$(intros.map (mkIdent ·.1))]*)
     mkTacticSuggestion tac tac (← renderIntro intros goal)
 
 def renderRfl : InfoviewSearchM (Option Html) := do
