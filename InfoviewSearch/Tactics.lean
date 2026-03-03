@@ -6,7 +6,7 @@ Authors: Jovan Gerbscheid
 module
 
 public import InfoviewSearch.Util
-public import Batteries.Tactic.Init
+public import Mathlib.Tactic.ByContra
 
 import all Lean.Meta.PPGoal
 
@@ -14,7 +14,7 @@ meta section
 
 namespace InfoviewSearch
 
-open Lean Meta ProofWidgets Jsx
+open Lean Meta ProofWidgets Jsx Mathlib.Tactic
 
 def mkUnusedNameNumbered (names : NameSet) (name : Name) : Name :=
   if !names.contains name then name else
@@ -37,7 +37,7 @@ def mkUnusedNameNumbered (names : NameSet) (name : Name) : Name :=
   name.appendAfter "₉"
 
 /-- Pretty print the hypotheses and goal (which are created by the suggested `intro` call). -/
-def renderIntro (intros : Array (Name × Expr)) (goal : Expr) : InfoviewSearchM Html := do
+def renderGoal (intros : Array (Name × Expr)) (goal : Expr) : InfoviewSearchM Html := do
   let hyps ← intros.mapM fun (name, type) ↦ do
     return <div>
       <strong className="goal-hyp"> {.text name.toString} {.text " "} </strong>
@@ -59,9 +59,7 @@ public def suggestIntro : InfoviewSearchM (Option Html) := do
   -- If the user wants to `intro` more, they can simply do it again.
   let goal ← whnfD goal
   unless goal.isForall do return none
-  let usedNames : NameSet := (← getLCtx).decls.foldl (init := ∅) fun
-    | s, some decl => s.insert decl.userName
-    | s, _ => s
+  let usedNames : NameSet := (← getLCtx).foldl (·.insert ·.userName) ∅
   forallTelescope (cleanupAnnotations := true) goal fun xs goal ↦ do
     let mut usedNames := usedNames
     let mut intros := #[]
@@ -82,7 +80,32 @@ public def suggestIntro : InfoviewSearchM (Option Html) := do
         `(tactic| by_contra $(mkIdent (intros[0]!).1))
       else
         `(tactic| intro $[$(intros.map (mkIdent ·.1))]*)
-    mkTacticSuggestion tac tac (← renderIntro intros goal)
+    mkTacticSuggestion tac tac (← renderGoal intros goal)
+
+/-- Give a suggestion for the `by_contra!` tactic if this can cancel the negation. -/
+public def suggestByContra! : InfoviewSearchM (Option Html) := do
+  unless (← read).pos == .root && (← read).hyp?.isNone do return none
+  let goal ← whnfR (← (← read).goal.getType)
+  if goal.getAppFn.isConstOf ``Not then return none
+  unless ← isProp goal do return none
+  let hyp := (mkConst ``Not).app goal
+  let hypDistrib := (← Push.pushCore (.const ``Not) { distrib := true } none hyp).expr
+  -- To test that the `push_neg` was interesting, check that the `¬` cannot be pulled out again.
+  if (← whnfR (← Push.pullCore (.const ``Not) hypDistrib none).expr).getAppFn.isConstOf ``Not then
+    return none
+  let hyp := (← Push.pushCore (.const ``Not) {} none hyp).expr
+  let usedNames : NameSet := (← getLCtx).foldl (·.insert ·.userName) ∅
+  let h := mkUnusedNameNumbered usedNames `h
+  let mut htmls := #[← mkTacticSuggestion
+    (← `(tactic| by_contra! $(mkIdent h):ident))
+    (← `(tactic| by_contra!))
+    (← renderGoal #[(h, hyp)] (mkConst ``False))]
+  unless hyp == hypDistrib do
+    htmls := htmls.push <| ← mkTacticSuggestion
+      (← `(tactic| by_contra! +$(mkIdent `distrib) $(mkIdent h):ident))
+      (← `(tactic| by_contra! +$(mkIdent `distrib)))
+      (← renderGoal #[(h, hypDistrib)] (mkConst ``False))
+  return some <| .element "div" #[] htmls
 
 public def suggestRfl : InfoviewSearchM (Option Html) := do
   unless (← read).pos == .root && (← read).hyp?.isNone do return none

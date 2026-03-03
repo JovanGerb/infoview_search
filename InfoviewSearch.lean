@@ -66,6 +66,9 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
   if let some html ← suggestIntro then
     markProgress
     htmls := htmls.push html
+  if let some html ← suggestByContra! then
+    markProgress
+    htmls := htmls.push html
   let rewritingInfo := {
     hyp? := ← fvarId?.mapM (·.getUserName)
     convPath? := ← if pos.isRoot then pure none else some <$> Conv.Path.ofSubExprPos rootExpr pos }

@@ -234,7 +234,8 @@ public def computeImportDiscrTrees (choice : Choice) : CoreM Unit := do
   appProm?.forM (·.resolve pre.app.toRefinedDiscrTree)
   appAtProm?.forM (·.resolve pre.appAt.toRefinedDiscrTree)
   logImportFailures errors
-  throwError "Some errors occurred when building the discrimination tree."
+  unless (← errors.errors.get).isEmpty do
+    throwError "Some errors occurred when building the discrimination tree."
 
 public def computeModuleDiscrTrees (choice : Choice) (parentDecl? : Option Name) :
     CoreM PreDiscrTrees := do

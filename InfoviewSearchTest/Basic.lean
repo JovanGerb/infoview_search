@@ -188,9 +188,21 @@ example : ∀ Nat : Nat, Nat = Nat := by
 example (p : Prop) (h : ¬ p) : ¬ p := by
   search_test => "by_contra h₁"
   fail_if_success search_test => "intro h₁"
+  fail_if_success search_test => "by_contra! h₁"
   -- TODO:
   -- search_test "h" => "contrapose h"
   exact h
+
+example (p q : Prop) (h : ¬ p) (h' : q) : ¬ p ∧ q := by
+  search_test => "by_contra! h₁" "by_contra! +distrib h₁"
+  -- TODO: suggest this too
+  exact ⟨h, h'⟩
+
+example (p q : Prop) (h : p) (h' : ¬ q) : p ∨ ¬ q := by
+  search_test => "by_contra! h₁"
+  fail_if_success search_test => "by_contra! +distrib h₁"
+  -- TODO: suggest this too
+  exact .inl h
 
 -- Test `push` and `push_neg`
 example (a b c : α) (s : Set α) (h : a ∈ insert b s) : True := by
@@ -293,6 +305,18 @@ example (n m : Nat) (h : n < m) : Fin.val ⟨n, h⟩ = n := by
     "conv =>\n enter [1]\n dsimp only"
     "push_cast" -- Recall `push_cast` has no `conv` mode version.
   rw [Fin.val_mk]
+
+example (s t : Set Nat) (h : ∀ x, x ∈ s ↔ x ∈ t) : s = t := by
+  -- TODO: suggest `ext x`.
+  ext x
+  exact h x
+
+example (s t : Set Nat) (h : ∀ x, x ∈ s ↔ x ∈ t) : s = t := by
+  ext
+  -- TODO: suggest `rename_i`:
+  rename_i x
+  exact h x
+
 
 -- TODO: pattern `a = b` vs `a = a`
 -- TODO: `CancelDenoms.derive_trans` namespace
