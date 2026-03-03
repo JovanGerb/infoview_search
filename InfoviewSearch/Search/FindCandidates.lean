@@ -233,8 +233,8 @@ public def computeImportDiscrTrees (choice : Choice) : CoreM Unit := do
   grwProm?.forM (·.resolve pre.grw.toRefinedDiscrTree)
   appProm?.forM (·.resolve pre.app.toRefinedDiscrTree)
   appAtProm?.forM (·.resolve pre.appAt.toRefinedDiscrTree)
-  --TODO: Maybe we should rather panic, because the logging messages will be discarded...
   logImportFailures errors
+  throwError "Some errors occurred when building the discrimination tree."
 
 public def computeModuleDiscrTrees (choice : Choice) (parentDecl? : Option Name) :
     CoreM PreDiscrTrees := do
@@ -252,19 +252,16 @@ public def computeLCtxDiscrTrees (choice : Choice) (fvarId? : Option FVarId) :
   return .append {} entries
 
 
-public partial def getImportMatches {α} (ref : IO.Ref (Option (Task (Option (RefinedDiscrTree α)))))
+public def getImportMatches {α} (ref : IO.Ref (Option (Task (Option (RefinedDiscrTree α)))))
     (e : Expr) : MetaM (MatchResult α) := do
   let some tree ← unsafe ref.take |
     ref.set none
-    throwError "Internal infoview_search error: the discrimination tree was not computed"
+    throwError "Internal infoview_search error: discrimination tree was not computed."
   let promise ← IO.Promise.new
   ref.set (some promise.result?)
   let some tree := tree.get |
-    -- This happens if the reference to the promise was dropped, which should never happen.
-    (panic! "Reference to discr tree promise was dropped. Recomputing..." : BaseIO Unit)
     ref.set none
-    computeImportDiscrTrees { rw := true, grw := true, app := true, appAt := true }
-    getImportMatches ref e
+    throwError "Internal infoview_search error: discrimination tree promise was dropped."
   let (result, newTree) ← withConfig (fun _ ↦ librarySearchIndexConfig) do
     getMatchTemp tree e false false
   promise.resolve newTree
@@ -272,6 +269,6 @@ public partial def getImportMatches {α} (ref : IO.Ref (Option (Task (Option (Re
 
 public def getMatches {α} (tree : RefinedDiscrTree α) (e : Expr) : MetaM (MatchResult α) := do
   withConfig (fun _ ↦ librarySearchIndexConfig) do
-    getMatch' tree e false false
+    return (← getMatchTemp tree e false false).1
 
 end InfoviewSearch

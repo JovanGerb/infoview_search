@@ -276,12 +276,6 @@ def getMatchAux (root : Std.HashMap Key TrieIndex) (e : Expr) (unify matchRootSt
       else
         getMatchLoop todo {} unify
 
-public def getMatch' (d : RefinedDiscrTree α) (e : Expr) (unify matchRootStar : Bool) :
-    MetaM (MatchResult α) :=
-  -- Make sure that heartbeats don't limit us here.
-  withTheReader Core.Context ({ · with maxHeartbeats := 0 }) do
-  (getMatchAux d.root e unify matchRootStar).run' d.tries
-
 -- Avoid name collision with the `getMatch` from mathlib.
 public def getMatchTemp (d : RefinedDiscrTree α) (e : Expr) (unify matchRootStar : Bool) :
     MetaM (MatchResult α × RefinedDiscrTree α) := do

@@ -144,8 +144,7 @@ public def infoviewSearchComponent : Component CancelPanelWidgetProps :=
   mk_rpc_widget% rpc
 
 elab "#infoview_search" : command => do
-  Elab.Command.liftCoreM do
-    computeImportDiscrTrees { rw := true, grw := true, app := true, appAt := true }
-    addPanelWidgetLocal <| ← mkCancelPanelWidget infoviewSearchComponent
+  let widget ← Elab.Command.liftCoreM <| mkCancelPanelWidget infoviewSearchComponent
+  addPanelWidgetLocal widget
 
 end InfoviewSearch
