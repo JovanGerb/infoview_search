@@ -6,7 +6,7 @@ Authors: Jovan Gerbscheid
 module
 
 public import Mathlib.Lean.Meta.RefinedDiscrTree.Lookup
-public import InfoviewSearch.RefreshComponent
+public import InfoviewSearch.ForUpstream
 
 /-!
 # Matching with a RefinedDiscrTree

@@ -13,7 +13,8 @@ public import Mathlib.Tactic.DepRewrite
 public import Batteries.Tactic.PermuteGoals
 public import Mathlib.Data.String.Defs
 public import InfoviewSearch.Conv
-public meta import InfoviewSearch.RefreshComponent
+public import InfoviewSearch.RefreshComponent
+public meta import InfoviewSearch.ForUpstream
 
 public meta section
 
@@ -26,6 +27,48 @@ register_option infoview_search.debug : Bool := {
 }
 
 open Lean Meta ProofWidgets Jsx Server
+
+inductive Premise where
+  | const (declName : Name)
+  | fvar (fvarId : FVarId)
+  deriving Inhabited
+
+namespace Premise
+
+def toString : Premise → String
+  | .const name | .fvar ⟨name⟩ => name.toString
+
+def length (premise : Premise) : Nat :=
+  premise.toString.length
+
+def getType : Premise → MetaM Expr
+  | .const name => (·.type) <$> getConstInfo name
+  | .fvar fvarId => fvarId.getType
+
+def forallMetaTelescopeReducing : Premise → MetaM (Expr × Array Expr × Array BinderInfo × Expr)
+  | .const name => do
+    let thm ← mkConstWithFreshMVarLevels name
+    let result ← Meta.forallMetaTelescopeReducing (← inferType thm)
+    return (mkAppN thm result.1, result)
+  | .fvar fvarId => do
+    let decl ← fvarId.getDecl
+    let result ← Meta.forallMetaTelescopeReducing (← instantiateMVars decl.type)
+    return (mkAppN decl.toExpr result.1, result)
+
+def unresolveName : Premise → MetaM Name
+  | .const name => do
+    unresolveNameGlobalAvoidingLocals name (fullNames := getPPFullNames (← getOptions))
+  | .fvar fvarId => fvarId.getUserName
+
+def toMessageData : Premise → MessageData
+  | .const name => .ofConstName name
+  | .fvar fvarId => .ofExpr (.fvar fvarId)
+
+def toHtml : Premise → MetaM Html
+  | .const name => constToHtml name
+  | .fvar fvarId => exprToHtml (.fvar fvarId)
+
+end Premise
 
 /-- The information required for pasting a suggestion into the editor -/
 structure Context where
@@ -92,6 +135,7 @@ partial def isExplicitEq (t s : Expr) : MetaM Bool := do
     return false
   let tArgs := t.getAppArgs
   let sArgs := s.getAppArgs
+  -- TODO: let's just use `getFunInfo`.
   let bis ← getBinderInfos t.getAppFn tArgs
   t.getAppNumArgs.allM fun i _ =>
     if bis[i]!.isExplicit then
@@ -212,66 +256,6 @@ def mkSuggestion (tac : TSyntax `tactic) (html : Html) (isText := false) :
     {button} {html}
     </div>
 
-def mkSuggestionList (htmls : Array Html) (header : Html) (startOpen := true) : Html :=
-  <details «open»={startOpen}>
-    <summary className="mv2 pointer"> {header} </summary>
-    {.element "div" #[] htmls}
-  </details>
-
-/-- Turn an `Expr` into an HTML with hover info. -/
-def exprToHtml (e : Expr) : MetaM Html :=
-  return <InteractiveCode fmt={← ppExprTagged e}/>
-
-open PrettyPrinter.Delaborator in
-
-/-- Turn a constant into an HTML with hover info.
-This avoids the `@` that may appear when using `exprToHtml`. -/
-def constToHtml (n : Name) : MetaM Html := do
-  let delab := withOptionAtCurrPos `pp.tagAppFns true <| delabConst
-  let ⟨fmt, infos⟩ ← PrettyPrinter.ppExprWithInfos (delab := delab) (← mkConstWithLevelParams n)
-  let tt := TaggedText.prettyTagged fmt
-  let ctx := {
-    env           := (← getEnv)
-    mctx          := (← getMCtx)
-    options       := (← getOptions)
-    currNamespace := (← getCurrNamespace)
-    openDecls     := (← getOpenDecls)
-    fileMap       := default
-    ngen          := (← getNGen)
-  }
-  return <InteractiveCode fmt={← tagCodeInfos ctx infos tt}/>
-
-/-- Display `fmt` with a docstring as if it is the constant `n`. -/
-def htmlWithDoc (fmt : Format) (n : Name) : MetaM Html := do
-  let tag := 0
-  -- Hack: use `.ofCommandInfo` instead of `.ofTacticInfo` to avoid printing `n` and its type.
-  -- Unfortunately, there is still a loose dangling ` : `.
-  let infos := .insert ∅ tag <| .ofCommandInfo
-    { elaborator := `InfoviewSearch, stx := .node .none n #[] }
-  let tt := TaggedText.prettyTagged <| .tag tag fmt
-  let ctx := {
-    env           := (← getEnv)
-    mctx          := (← getMCtx)
-    options       := (← getOptions)
-    currNamespace := (← getCurrNamespace)
-    openDecls     := (← getOpenDecls)
-    fileMap       := default
-    ngen          := (← getNGen)
-  }
-  -- TODO: I would love to print this using the same keyword colour used by the editor,
-  -- but I don't think this is possible. Additionally, `InteractiveCode` already overwrites the
-  -- colour and style of the text (namely the expression style)
-  return <InteractiveCode fmt={← tagCodeInfos ctx infos tt} />
-
-
-/-- Pretty print a tactic with its docstring as hover info.
-
-I would love to print `tac` with another colour, e.g. the keyword highlighting used by the editor,
-but I have no idea how to do this.
--/
-def tacticToHtml (tac : TSyntax `tactic) : MetaM Html := do
-  htmlWithDoc (← PrettyPrinter.ppTactic tac) tac.1.getKind
-
 /-- Create a suggestion for inserting `stx` and tactic name `tac`. -/
 def mkTacticSuggestion (stx tac : TSyntax `tactic) (html : Html) (isText := false) :
     InfoviewSearchM Html := do
@@ -323,47 +307,5 @@ def kabstractFindsPositions (e p : Expr) (targetPos : SubExpr.Pos) : MetaM Bool 
   match ← ExceptT.run <| visit e .root with
   | .ok () => throwError "invalid position {targetPos} in {e}"
   | .error found => return found
-
-inductive Premise where
-  | const (declName : Name)
-  | fvar (fvarId : FVarId)
-  deriving Inhabited
-
-namespace Premise
-
-def toString : Premise → String
-  | .const name | .fvar ⟨name⟩ => name.toString
-
-def length (premise : Premise) : Nat :=
-  premise.toString.length
-
-def getType : Premise → MetaM Expr
-  | .const name => (·.type) <$> getConstInfo name
-  | .fvar fvarId => fvarId.getType
-
-def forallMetaTelescopeReducing : Premise → MetaM (Expr × Array Expr × Array BinderInfo × Expr)
-  | .const name => do
-    let thm ← mkConstWithFreshMVarLevels name
-    let result ← Meta.forallMetaTelescopeReducing (← inferType thm)
-    return (mkAppN thm result.1, result)
-  | .fvar fvarId => do
-    let decl ← fvarId.getDecl
-    let result ← Meta.forallMetaTelescopeReducing (← instantiateMVars decl.type)
-    return (mkAppN decl.toExpr result.1, result)
-
-def unresolveName : Premise → MetaM Name
-  | .const name => do
-    unresolveNameGlobalAvoidingLocals name (fullNames := getPPFullNames (← getOptions))
-  | .fvar fvarId => fvarId.getUserName
-
-def toMessageData : Premise → MessageData
-  | .const name => .ofConstName name
-  | .fvar fvarId => .ofExpr (.fvar fvarId)
-
-def toHtml : Premise → MetaM Html
-  | .const name => constToHtml name
-  | .fvar fvarId => exprToHtml (.fvar fvarId)
-
-end Premise
 
 end InfoviewSearch

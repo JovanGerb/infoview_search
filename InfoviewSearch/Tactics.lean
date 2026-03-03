@@ -10,7 +10,7 @@ public import Batteries.Tactic.Init
 
 import all Lean.Meta.PPGoal
 
-public meta section
+meta section
 
 namespace InfoviewSearch
 
@@ -51,7 +51,7 @@ def renderIntro (intros : Array (Name × Expr)) (goal : Expr) : InfoviewSearchM 
   return .element "div" #[("className", Json.str "font-code tl pre-wrap")] (hyps.push goal)
 
 /-- Give a suggestion for the `intro` or `by_contra` tactic. -/
-def suggestIntro : InfoviewSearchM (Option Html) := do
+public def suggestIntro : InfoviewSearchM (Option Html) := do
   unless (← read).pos == .root && (← read).hyp?.isNone do return none
   let goal ← whnfR (← (← read).goal.getType)
   let isNot := goal.getAppFn.isConstOf ``Not
@@ -84,21 +84,11 @@ def suggestIntro : InfoviewSearchM (Option Html) := do
         `(tactic| intro $[$(intros.map (mkIdent ·.1))]*)
     mkTacticSuggestion tac tac (← renderIntro intros goal)
 
-def renderRfl : InfoviewSearchM (Option Html) := do
+public def suggestRfl : InfoviewSearchM (Option Html) := do
   unless (← read).pos == .root && (← read).hyp?.isNone do return none
   try withoutModifyingMCtx (← read).goal.applyRfl catch _ => return none
   let tactic ← `(tactic| rfl)
   mkSuggestion (isText := true) tactic <| .text "reflexivity"
 
-def renderTactic : InfoviewSearchM (Option Html) := do
-  let mut tactics := #[]
-  if let some html ← renderRfl then
-    tactics := tactics.push html
-  if let some html ← suggestIntro then
-    tactics := tactics.push html
-  if !tactics.isEmpty then
-    return mkSuggestionList tactics <| .text "tactics"
-  else
-    return none
 
 end InfoviewSearch

@@ -140,6 +140,9 @@ public def suggestUnfold (e : Expr) (rwKind : RwKind) :
   let htmls ← results.mapM fun unfold => do
     let tactic ← tacticSyntax e unfold rwKind
     mkSuggestion tactic (← exprToHtml unfold)
-  return mkSuggestionList (startOpen := false) htmls <| .text "unfold"
+  return <details>
+    <summary className="mv2 pointer"> unfold {← exprToHtml e} </summary>
+    {.element "div" #[] htmls}
+  </details>
 
 end InfoviewSearch

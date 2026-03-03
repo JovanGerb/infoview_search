@@ -7,6 +7,7 @@ module
 
 public import ProofWidgets.Component.Panel.Basic
 public import ProofWidgets.Data.Html
+public import InfoviewSearch.ForUpstream
 
 /-!
 # The `RefreshComponent` widget
@@ -50,39 +51,7 @@ the first command gets badly affected.
 -/
 
 
-public section
-
-section MonadDrop
-
-/--
-The class `MonadDrop m n` allows a computation in monad `m` to be run in monad `n`.
-For example, a `MetaM` computation can be ran in `EIO Exception`,
-which can then be ran as a task using `EIO.asTask`.
--/
-class MonadDrop (m : Type → Type) (n : outParam <| Type → Type) where
-  /-- Translates an action from monad `m` into monad `n`. -/
-  dropM {α} : m α → m (n α)
-
-export MonadDrop (dropM)
-
-variable {m n : Type → Type} [Monad m] [MonadDrop m n]
-
-instance : MonadDrop m m where
-  dropM := pure
-
-instance {ρ} : MonadDrop (ReaderT ρ m) n where
-  dropM act := fun ctx => dropM (act ctx)
-
-instance {σ} : MonadDrop (StateT σ m) n where
-  dropM act := do liftM <| dropM <| act.run' (← get)
-
-instance {ω σ} [MonadLiftT (ST ω) m] : MonadDrop (StateRefT' ω σ m) n where
-  dropM act := do liftM <| dropM <| act.run' (← get)
-
-end MonadDrop
-
-
-meta section
+public meta section
 
 namespace ProofWidgets
 open Lean Server Widget Jsx

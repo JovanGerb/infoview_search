@@ -123,13 +123,13 @@ def classifyEliminator (fvarId : FVarId) (eliminator : Name) (induction? : Optio
 def mkInductionHtml (stx : TSyntax `tactic) (newGoals : Html)
     (induction : Bool) (using? : Option Name) : InfoviewSearchM Html := do
   -- Print the tactic without any argument (using a little syntax hack).
-  let mut tac := if induction then "induction" else "cases"
-  if using?.isSome then
-    tac := tac ++ " using "
+  let tac := if induction then "induction" else "cases"
   let kind := if induction then ``Lean.Parser.Tactic.induction else ``Lean.Parser.Tactic.cases
-  let mut title ← htmlWithDoc tac kind
-  if let some eliminator := using? then
-    title := .element "span" #[] #[title, ← constToHtml eliminator]
+  let title ←
+    if let some eliminator := using? then
+      pure <span> {← formatToHtmlWithDoc (s!"{tac} using ") kind} {← constToHtml eliminator} </span>
+    else
+      formatToHtmlWithDoc tac kind
   mkSuggestion stx <details style={json% { "width": "100%" }}>
     <summary style={json% { "cursor" : "pointer" }}> {title} </summary>
     {newGoals}

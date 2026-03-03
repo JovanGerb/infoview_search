@@ -16,10 +16,7 @@ import Mathlib.SetTheory.ZFC.Basic
 This file tests some basic features of `#infoview_search`
 -/
 
-set_option linter.hashCommand false
-set_option linter.unusedTactic false
-set_option linter.unusedVariables false
-set_option linter.privateModule false
+set_option linter.all false
 
 open scoped InfoviewSearch.Test
 
