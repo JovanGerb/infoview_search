@@ -184,25 +184,10 @@ def PreDiscrTrees.append (pres : PreDiscrTrees) (maps : Entries) : PreDiscrTrees
   app := maps.app.foldl (init := pres.app) fun pre (key, e) ↦ pre.push key e
   appAt := maps.appAt.foldl (init := pres.appAt) fun pre (key, e) ↦ pre.push key e
 
-public initialize rwRef : IO.Ref (Option (Task (Option (RefinedDiscrTree RwLemma)))) ←
-  IO.mkRef none
-public initialize grwRef : IO.Ref (Option (Task (Option (RefinedDiscrTree GrwLemma)))) ←
-  IO.mkRef none
-public initialize appRef : IO.Ref (Option (Task (Option (RefinedDiscrTree ApplyLemma)))) ←
-  IO.mkRef none
-public initialize appAtRef : IO.Ref (Option (Task (Option (RefinedDiscrTree ApplyAtLemma)))) ←
-  IO.mkRef none
-
-def setRefIfNone {α} [Nonempty α] (ref : IO.Ref (Option (Task (Option α)))) :
-    BaseIO (Option (IO.Promise α)) := unsafe do
-  match ← ref.take with
-  | some val =>
-    ref.set val
-    return none
-  | none => do
-    let promise ← IO.Promise.new
-    ref.set promise.result?
-    return some promise
+public initialize rwRef : IO.Ref (Option (RefinedDiscrTree RwLemma)) ← IO.mkRef none
+public initialize grwRef : IO.Ref (Option (RefinedDiscrTree GrwLemma)) ← IO.mkRef none
+public initialize appRef : IO.Ref (Option (RefinedDiscrTree ApplyLemma)) ← IO.mkRef none
+public initialize appAtRef : IO.Ref (Option (RefinedDiscrTree ApplyAtLemma)) ← IO.mkRef none
 
 /-- The configuration used when indexing into the discrimination tree, and when looking up in it.
 
@@ -216,25 +201,22 @@ def librarySearchIndexConfig : Config where
   proj := .no
 
 public def computeImportDiscrTrees (choice : Choice) : CoreM Unit := do
-  let rwProm? ← if choice.rw then setRefIfNone rwRef else pure none
-  let grwProm? ← if choice.grw then setRefIfNone grwRef else pure none
-  let appProm? ← if choice.app then setRefIfNone appRef else pure none
-  let appAtProm? ← if choice.appAt then setRefIfNone appAtRef else pure none
   let choice := {
-    rw := rwProm?.isSome
-    grw := grwProm?.isSome
-    app := appProm?.isSome
-    appAt := appAtProm?.isSome
+    rw := choice.rw && (← rwRef.get).isNone
+    grw := choice.grw && (← grwRef.get).isNone
+    app := choice.app && (← appRef.get).isNone
+    appAt := choice.appAt && (← appAtRef.get).isNone
   }
   unless choice.any do return
   let (tasks, errors) ← foldEnv {} librarySearchIndexConfig (Entries.addConst choice)
   let pre : PreDiscrTrees := tasks.foldl (·.append ·.get) {}
-  rwProm?.forM (·.resolve pre.rw.toRefinedDiscrTree)
-  grwProm?.forM (·.resolve pre.grw.toRefinedDiscrTree)
-  appProm?.forM (·.resolve pre.app.toRefinedDiscrTree)
-  appAtProm?.forM (·.resolve pre.appAt.toRefinedDiscrTree)
-  logImportFailures errors
+  Core.checkInterrupted
+  rwRef.set pre.rw.toRefinedDiscrTree
+  grwRef.set pre.grw.toRefinedDiscrTree
+  appRef.set pre.app.toRefinedDiscrTree
+  appAtRef.set pre.appAt.toRefinedDiscrTree
   unless (← errors.errors.get).isEmpty do
+    logImportFailures errors
     throwError "Some errors occurred when building the discrimination tree."
 
 public def computeModuleDiscrTrees (choice : Choice) (parentDecl? : Option Name) :
@@ -253,19 +235,14 @@ public def computeLCtxDiscrTrees (choice : Choice) (fvarId? : Option FVarId) :
   return .append {} entries
 
 
-public def getImportMatches {α} (ref : IO.Ref (Option (Task (Option (RefinedDiscrTree α)))))
+public def getImportMatches {α} (ref : IO.Ref (Option (RefinedDiscrTree α)))
     (e : Expr) : MetaM (MatchResult α) := do
-  let some tree ← unsafe ref.take |
-    ref.set none
+  let some tree ← ref.get |
     throwError "Internal infoview_search error: discrimination tree was not computed."
-  let promise ← IO.Promise.new
-  ref.set (some promise.result?)
-  let some tree := tree.get |
-    ref.set none
-    throwError "Internal infoview_search error: discrimination tree promise was dropped."
   let (result, newTree) ← withConfig (fun _ ↦ librarySearchIndexConfig) do
     getMatchTemp tree e false false
-  promise.resolve newTree
+  Core.checkInterrupted
+  ref.set newTree
   return result
 
 public def getMatches {α} (tree : RefinedDiscrTree α) (e : Expr) : MetaM (MatchResult α) := do
