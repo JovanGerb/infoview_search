@@ -7,6 +7,7 @@ module
 
 public import InfoviewSearch.Util
 public meta import Mathlib.Control.Basic
+public import Batteries.CodeAction.Misc
 
 import all Lean.Elab.Tactic.Induction
 
@@ -21,8 +22,9 @@ namespace InfoviewSearch
 
 open Lean Meta Elab Tactic Server ProofWidgets Jsx
 
-/-- Return some constants that may be suitable as eliminators for
-the `induction` or `cases` tactic, using the given variable.
+/-- Return constants that may be suitable as eliminators for the `induction` or `cases` tactic
+on the given variable. We additionally return `some true`/`some false` if this is the default
+`induction`/`cases` recursor respectively.
 
 We consider all declarations that are marked `elab_as_elim`
 and whose name starts with the name of the type in question.
@@ -135,6 +137,26 @@ def mkInductionHtml (stx : TSyntax `tactic) (newGoals : Html)
     {newGoals}
     </details>
 
+/-- Create the syntax for the cases of for `induction`/`cases`. -/
+def mkAltStxs (elimType : Expr) (induction : Bool) (useSorry : Bool) :
+    MetaM (TSyntax ``Parser.Tactic.inductionAlts) := do
+  -- We use this function from Batteries's `induction`/`cases` code action.
+  let alts ← Batteries.CodeAction.getElimExprNames elimType
+  let alts ← alts.mapM fun (name, args) ↦ do
+    -- This naming heuristic is also copied from Batteries's code action.
+    let args :=
+      if induction && args.foldl (fun c n =>
+          if n.eraseMacroScopes.getString!.endsWith "_ih" then c+1 else c) 0 == 1 then
+        args.map (fun n => if !n.hasMacroScopes && n.getString!.endsWith "_ih" then `ih else n)
+      else args
+    let args : Array (TSyntax [`ident, `Lean.Parser.Term.hole]) :=
+      args.map fun arg ↦ if arg.hasNum || arg.isInternal then ⟨mkHole .missing⟩ else mkIdent arg
+    if useSorry then
+      `(Parser.Tactic.inductionAlt| | $(mkIdent name) $[$args]* => sorry)
+    else
+      `(Parser.Tactic.inductionAlt| | $(mkIdent name) $[$args]* => _)
+  `(Parser.Tactic.inductionAlts| with $[$alts]*)
+
 def suggestInduction (fvarId : FVarId) : InfoviewSearchM (Option Html) := do
   let candidates ← getEliminatorCandidates fvarId
   let n := mkIdent (← fvarId.getUserName)
@@ -149,9 +171,10 @@ def suggestInduction (fvarId : FVarId) : InfoviewSearchM (Option Html) := do
   let htmls ← candidates.filterMapM fun ((induction, using?), elimInfo, targets) ↦ do
     try
       some <$> withoutModifyingMCtx do
+      let alts ← mkAltStxs elimInfo.elimType induction (useSorry := false)
       let stx ← if induction
-        then `(tactic| induction $n:ident $[using $(using?.map mkIdent):ident]?)
-        else `(tactic| cases $n:ident $[using $(using?.map mkIdent):ident]?)
+        then `(tactic| induction $n:ident $[using $(using?.map mkIdent):ident]? $alts)
+        else `(tactic| cases $n:ident $[using $(using?.map mkIdent):ident]? $alts)
       let mctxOld ← getMCtx
       let go := if induction
         then evalInductionCore stx elimInfo targets
@@ -167,8 +190,13 @@ def suggestInduction (fvarId : FVarId) : InfoviewSearchM (Option Html) := do
       let newGoals ← newGoals.mapM fun goal ↦ do
         let goal ← addMessageContextFull (.ofGoal goal)
         return <InteractiveMessage msg={← WithRpcRef.mk goal} />
-      mkInductionHtml stx (.element "div" #[] newGoals.toArray) induction using?
+      let altsWithSorry ← mkAltStxs elimInfo.elimType induction (useSorry := true)
+      let stxWithSorry ← if induction
+        then `(tactic| induction $n:ident $[using $(using?.map mkIdent):ident]? $altsWithSorry)
+        else `(tactic| cases $n:ident $[using $(using?.map mkIdent):ident]? $altsWithSorry)
+      mkInductionHtml stxWithSorry (.element "div" #[] newGoals.toArray) induction using?
     catch ex =>
+      -- In debug mode, we want to see which eliminators were rejected.
       if infoview_search.debug.get (← getOptions) then
         return some <div «class»="error">
           <div>Elimination principle {← exprToHtml elimInfo.elimExpr} failed to apply:</div>
