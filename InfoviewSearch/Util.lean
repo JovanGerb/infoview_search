@@ -20,10 +20,10 @@ public meta section
 
 namespace InfoviewSearch
 
-/-- Let the `#infoview_search` widget show all errors of lemmas that failed to apply. -/
+/-- Let `#infoview_search` show the candidate lemmas that failed to apply. -/
 register_option infoview_search.debug : Bool := {
   defValue := false
-  descr := "let `#infoview_search` show all lemmas that were candidates, but which failed to apply"
+  descr := "let `#infoview_search` show the candidate lemmas that failed to apply"
 }
 
 open Lean Meta ProofWidgets Jsx Server

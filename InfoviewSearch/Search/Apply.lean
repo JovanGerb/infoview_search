@@ -37,12 +37,25 @@ def ApplyKey.isDuplicate (a b : ApplyKey) : MetaM Bool :=
       <&&> isExplicitEq a.newGoals[i]!.expr b.newGoals[i]!.expr
 
 /-- Return the `apply` tactic that performs the application. -/
-private def tacticSyntax (proof : Expr) (useExact : Bool) : MetaM (TSyntax `tactic) := do
-  let proof ← withOptions (pp.mvars.set · false) (PrettyPrinter.delab proof)
-  if useExact then
-    `(tactic| exact $proof)
+private def tacticSyntax (lemmaName : Premise) (proof : Expr) (closesGoal justLemmaName : Bool) :
+    MetaM (TSyntax `tactic) := do
+  if justLemmaName then
+    let id := mkIdent (← lemmaName.unresolveName)
+    -- We can only use `exact` instead of `apply` if the proof has no explicit arguments.
+    if ← pure closesGoal <&&> hasOnlyImplicitArgs proof then
+      `(tactic| exact $id)
+    else
+      `(tactic| apply $(mkIdent (← lemmaName.unresolveName)))
   else
-    `(tactic| refine $proof)
+    let proof ← withOptions (pp.mvars.set · false) (PrettyPrinter.delab proof)
+    if closesGoal then
+      `(tactic| exact $proof)
+    else
+      `(tactic| refine $proof)
+where
+  hasOnlyImplicitArgs (e : Expr) : MetaM Bool := do
+    let info ← getFunInfoNArgs e.getAppFn e.getAppNumArgs
+    return !info.paramInfo.any (·.binderInfo.isExplicit)
 
 set_option linter.style.emptyLine false in
 /-- Generate a suggestion for applying `lem`. -/
@@ -54,9 +67,13 @@ def ApplyLemma.try (lem : ApplyLemma) :
   unless ← isDefEq e target do throwError "{e} does not unify with {target}"
   synthAppInstances `infoview_search default mvars binderInfos false false
   let mut newGoals := #[]
+  let mut justLemmaName := true
   for mvar in mvars, bi in binderInfos do
     unless ← mvar.mvarId!.isAssigned do
-      newGoals := newGoals.push (← instantiateMVars (← inferType mvar), bi)
+      if ← isProof mvar <&&> mvar.mvarId!.assumptionCore then
+        justLemmaName := false
+      else
+        newGoals := newGoals.push (← instantiateMVars (← inferType mvar), bi)
 
   let makesNewMVars := newGoals.any fun goal =>
     (goal.1.findMVar? (mvars.contains <| .mvar ·)).isSome
@@ -69,7 +86,8 @@ def ApplyLemma.try (lem : ApplyLemma) :
     name := lem.name.toString
     newGoals := ← newGoals.mapM (abstractMVars ·.1)
   }
-  let tactic ← tacticSyntax proof newGoals.isEmpty
+  let tactic ← tacticSyntax lem.name proof
+    (closesGoal := newGoals.isEmpty) (justLemmaName := justLemmaName)
   let mut explicitGoals := #[]
   for (mvarId, bi) in newGoals do
     -- TODO: think more carefully about which goals should be displayed

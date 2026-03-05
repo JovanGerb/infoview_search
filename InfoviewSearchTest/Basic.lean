@@ -32,23 +32,23 @@ example (h : 0 + n = n) : n = n + 0 := by
   search_test "/1" =>
     "rw [show n + 0 = n from rfl]"
     "rw [Nat.add_zero]"
-  search_test "" =>
+  search_test =>
     "rfl"
     "rw [Nat.left_eq_add]"
-    "refine Nat.dvd_antisymm ?_ ?_"
+    "apply Nat.dvd_antisymm"
   -- TODO: this shouldn't show up
-  search_test "" =>
+  search_test =>
     "rw [Nat.Simproc.eq_add_gt]"
   search_test h "" => "apply Nat.le.intro at h" "rw [← Nat.beq_eq] at h"
   search_test h "/0/1" => "rw [Nat.add_comm] at h"
   rfl
 
 example : n - 3 ≤ m - 3 := by
-  search_test "" => "refine Nat.sub_le_sub_right ?_ 3"
+  search_test => "apply Nat.sub_le_sub_right"
   exact test_sorry
 
 example {α} [LinearOrder α] (a b : α) (h : a ≤ b) (h' : b ≤ a) : a ≤ b := by
-  search_test "" => "exact h"
+  search_test => "exact h"
   search_test "/1" => "grw [← h]"
   search_test "/0/1" => "grw [h]"
   apply le_of_lt
@@ -61,14 +61,14 @@ example {α} [LinearOrder α] (a b : α) (h : a < b) (h' : b < a) : a ≤ b := b
   search_test "/1" => "grw [← h]"
   search_test "/0/1" => "grw [h]"
   apply le_of_lt
-  search_test "" => "exact h"
+  search_test => "exact h"
   search_test "/1" => "grw [← h]"
   search_test "/0/1" => "grw [h]"
   search_test h "/1" => "grw [h'] at h"
   exact h
 
 example (h : m ≡ k [MOD n]) (h' : m ≡ k + 1 [MOD n]) (h'' : m = k + 1) : m ≡ k [MOD n] := by
-  search_test "" => "exact h"
+  search_test => "exact h"
   search_test "/1" => "grw [← h]"
   search_test h' "/0/1" => "grw [h] at h'"
   search_test h' "/0/1" => "rw [h''] at h'"
@@ -110,7 +110,7 @@ example {α} [Lattice α] [AddGroup α] (f : ℕ → α) (c : α)
 example (s t : Set α) (h : s ⊆ t) (h' : t ⊂ s) : s ⊆ t ∪ s := by
   search_test "/0/1" => "nth_grw 1 [h]"
   search_test "/1/0/1" => "grw [← h]"
-  search_test "" => "intro a h₁"
+  search_test => "intro a h₁"
   exact test_sorry
 
 namespace AntiSymmRelTest
@@ -171,17 +171,17 @@ example (n m : Nat) (h : n.succ = m.succ) : True := by
 
 -- Test the `rfl` and `intro` suggestions
 example {α} (s : Set α) : s ⊆ s := by
-  search_test "" => "intro a h" "rfl"
+  search_test => "intro a h" "rfl"
   rfl
 
 -- The names of the introduced variables are modified to not overlap existing names.
 example {α} (s : Set α) (a h : 1 = 2) : s ⊆ s := by
-  search_test "" => "intro a₁ h₁" "rfl"
+  search_test => "intro a₁ h₁" "rfl"
   rfl
 
 -- We're happy to overwrite global constants
 example : ∀ Nat : Nat, Nat = Nat := by
-  search_test "" => "intro Nat"
+  search_test => "intro Nat"
   intro Nat
   rfl
 
@@ -219,34 +219,33 @@ example (p q r : Prop) (h : ¬ (p ∧ q)) (h' : ¬ (p ∨ q)) : True := by
 
 -- Test `norm_cast` and `push_cast`
 example (a b c : Nat) : (↑(a + b) : Int) * c = ↑(a * c) + (b * c) := by
-  search_test "" => "norm_cast" "push_cast" "dsimp" "ring_nf"
+  search_test => "norm_cast" "push_cast" "dsimp" "ring_nf"
   push_cast
-  search_test "" =>
+  search_test =>
     "ring_nf" "norm_cast"
-    "exact Int.add_mul ↑a ↑b ↑c" "exact add_mul ↑a ↑b ↑c"
-  fail_if_success search_test "" => "push_cast"
+    "apply Int.add_mul" "apply add_mul"
+  fail_if_success search_test => "push_cast"
   norm_cast
-  search_test "" =>
-    "ring_nf" "exact Nat.add_mul a b c" "exact add_mul a b c"
+  search_test => "ring_nf" "apply Nat.add_mul" "apply add_mul"
   ring_nf
 
 -- Test norm_num
 example : (2 : ℚ) = 1 + 1 := by
-  search_test "" => "norm_num" "norm_cast" "ring_nf"
+  search_test => "norm_num" "norm_cast" "ring_nf"
   norm_num
 
 -- test `ring`
 example {α} [CommRing α] (a b : α) : Odd a → Odd b → Odd (a * b) := by
   rintro ⟨a, rfl⟩ ⟨b, rfl⟩
   refine ⟨2 * a * b + b + a, ?_⟩
-  search_test "" => "ring_nf"
-  fail_if_success search_test "" => "noncomm_ring"
+  search_test => "ring_nf"
+  fail_if_success search_test => "noncomm_ring"
   ring_nf
 
 example {α} [Ring α] (a b : α) : Odd a → Odd b → Odd (a * b) := by
   rintro ⟨a, rfl⟩ ⟨b, rfl⟩
   refine ⟨2 * a * b + b + a, ?_⟩
-  search_test "" => "noncomm_ring"
+  search_test => "noncomm_ring"
   noncomm_ring
 
 -- Test induction
@@ -297,16 +296,15 @@ example {p : ZFSet → Prop} (s) : p s := by
 TODO for the induction suggestions:
 - make induction using `Quotient.induction_on_pi` work.
 - deduplication when multiple recursors do the same thing.
-- paste the whole induction tactic including all match arms.
 - use `rcases` instead of `cases` for non-case-splitting `cases`.
-- that also unlocks the possibility for `rintro` rather than intro
-- `rcases h with rfl` can simply be replaced by `subst h`
+- that also unlocks the possibility for `rintro` rather than `intro`.
+- `rcases h with rfl` can simply be replaced by `subst h`.
 -/
 
 -- Test that projections aren't reduced in the discrimination tree indexing:
 example (n : Nat) : n = n := by
-  fail_if_success search_test "" => "exact String.Pos.Raw.byteIdx_mk n"
-  search_test "" => "exact rfl"
+  fail_if_success search_test => "exact String.Pos.Raw.byteIdx_mk n"
+  search_test => "exact rfl"
   rfl
 
 -- And hence, it is possible to suggest `Fin.val_mk` in the right scenario:
