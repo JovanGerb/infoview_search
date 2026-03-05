@@ -179,7 +179,7 @@ def suggestInduction (fvarId : FVarId) : InfoviewSearchM (Option Html) := do
       let go := if induction
         then evalInductionCore stx elimInfo targets
         else evalCasesCore stx elimInfo targets
-      let newGoals ← (Tactic.run (← read).goal go).run'
+      let newGoals ← (Tactic.run (← read).goal (withoutRecover go)).run'
       /- Some lemmas (e.g. `Int.inductionOn'` and `Int.strongRec`) add new metavariables
       to the goal, and for some reason the `induction` tactic doesn't throw an error about this.
       So we have to figure out ourselves when this happens. -/

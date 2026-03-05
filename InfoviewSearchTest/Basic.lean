@@ -11,6 +11,7 @@ import Mathlib.Data.Set.Insert
 import InfoviewSearchTest.TestTactic
 import Mathlib.Data.Finset.Max
 import Mathlib.SetTheory.ZFC.Basic
+import Mathlib.Algebra.Lie.OfAssociative
 
 /-!
 This file tests some basic features of `#infoview_search`
@@ -247,42 +248,51 @@ example {α} [Ring α] (a b : α) : Odd a → Odd b → Odd (a * b) := by
   refine ⟨2 * a * b + b + a, ?_⟩
   search_test "" => "noncomm_ring"
   noncomm_ring
-  congr 2
-  -- TODO: this only changes the `2 : ℤ` into `2 : ℕ`. Should this somehow be made clearer?
-  search_test "" => "norm_cast"
-  exact test_sorry
 
 -- Test induction
 example {p : Nat → Prop} (n) : p n := by
   search_test n =>
-    "induction n"
-    "induction n using Nat.strongRec"
-    "induction n using Nat.binaryRec"
-    "cases n"
+    "induction n with
+    | zero => sorry
+    | succ n _ => sorry"
+    "induction n using Nat.strongRec with
+    | ind n _ => sorry"
+    "induction n using Nat.binaryRec with
+    | zero => sorry
+    | bit b n _ => sorry"
+    "cases n with
+    | zero => sorry
+    | succ n => sorry"
   exact test_sorry
 
 example {p : Int → Prop} (z) : p z := by
   search_test z =>
-    "induction z"
-    "induction z using Int.negInduction"
-    "cases z"
+    "induction z with
+    | zero => sorry
+    | succ i _ => sorry
+    | pred i _ => sorry"
+    " induction z using Int.negInduction with
+    | nat n => sorry
+    | neg _ n => sorry"
+    "cases z with
+    | ofNat _ => sorry
+    | negSucc _ => sorry"
   exact test_sorry
 
-example {p : Finset Int → Prop} (s) : p s := by
-  search_test s => "induction s using Finset.induction"
+example {p : Finset Int → Prop} (s) (h : s = ∅) : p s := by
+
+  search_test s =>
+    "induction s using Finset.induction with
+    | empty => sorry
+    | insert a s _ _ => sorry"
   exact test_sorry
 
 example {p : ZFSet → Prop} (s) : p s := by
-  search_test s => "induction s using ZFSet.inductionOn"
+  search_test s =>
+    "induction s using ZFSet.inductionOn with
+    | h x _ => sorry"
   exact test_sorry
 
-example {p : Nat → Prop} (n) : p n := by
-  search_test "/1" =>
-    "induction n"
-    "induction n using Nat.strongRec"
-    "induction n using Nat.binaryRec"
-    "cases n"
-  exact test_sorry
 /-
 TODO for the induction suggestions:
 - make induction using `Quotient.induction_on_pi` work.
@@ -317,8 +327,17 @@ example (s t : Set Nat) (h : ∀ x, x ∈ s ↔ x ∈ t) : s = t := by
   rename_i x
   exact h x
 
+example (p q : Prop) : ¬ p ↔ ¬ q := by
+  -- TODO: suggest `contrapose`
+  contrapose
+  exact test_sorry
 
--- TODO: pattern `a = b` vs `a = a`
+example (p q : Prop) (h : ¬ p) : q := by
+  -- TODO: suggest `contrapose`
+  contrapose h
+  exact test_sorry
+
+
 -- TODO: `CancelDenoms.derive_trans` namespace
 
 /-
@@ -348,7 +367,11 @@ TODO:
   - `by_cases` on the selected proposition, if it is not purely in RHS of `→` or either side of `∧`
   - `specialize`/`use`?
   - `fun_induction`/`fun_cases`?
+
 - The tactics section should be extensible via an attribute.
+
+- Discrimination tree pattern scores.
+  Pattern `Eq Nat a b` should get lower score than `Eq α a a`.
 
 - Improve the pasting feature: independent of where the cursor is, we want to paste the
   tactic in the correct place.
