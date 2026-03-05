@@ -50,24 +50,16 @@ Note: It is expensive to create two new `IO.Ref`s for every `MetaM` operation,
   so instead we reuse the same refs `mstate` and `cstate`. These are also used to
   remember the cache, and the name generator across the operations.
 -/
-@[inline] private def visitConst
-    (env : Environment)
-    (modName : Name)
-    (errorRef : ImportErrorRef)
-    (mctx : Meta.Context)
-    (mstate : IO.Ref Meta.State)
-    (cctx : Core.Context)
-    (cstate : IO.Ref Core.State)
+@[inline] private def visitConst (env : Environment) (modName : Name) (errorRef : ImportErrorRef)
     (act : α → Name → ConstantInfo → MetaM α)
-    (a : α) (name : Name) (constInfo : ConstantInfo) :
-    BaseIO α := do
+    (a : α) (name : Name) (constInfo : ConstantInfo) : MetaM α := do
   -- here we use an if-then-else clause instead of the more stylish if-then-return,
   -- because it compiles to more performant code
   if constInfo.isUnsafe then pure a else
   if blacklistInsertion env name then pure a else
-  match ← (((act a name constInfo) mctx mstate) cctx cstate).toBaseIO with
-  | .ok a => return a
-  | .error e =>
+  try
+    act a name constInfo
+  catch e =>
     let i : ImportFailure := {
       module := modName,
       const := name,
@@ -75,39 +67,23 @@ Note: It is expensive to create two new `IO.Ref`s for every `MetaM` operation,
     errorRef.errors.modify (·.push i)
     return a
 
-/-- Loop through all constants that appear in the module `mdata`. -/
-private def visitModule
-    (env : Environment)
-    (errorRef : ImportErrorRef)
-    (mctx : Meta.Context)
-    (mstate : IO.Ref Meta.State)
-    (cctx : Core.Context)
-    (cstate : IO.Ref Core.State)
-    (act : α → Name → ConstantInfo → MetaM α)
-    (mname : Name)
-    (constNames : Array Name) (constants : Array ConstantInfo)
-    (a : α) : BaseIO α := do
-  let mut a := a
-  for h : i in *...constNames.size do
-    let name := constNames[i]
-    let constInfo := constants[i]!
-    a ← visitConst env mname errorRef mctx mstate cctx cstate act a name constInfo
-  return a
-
 /-- Loop through all constants in modules with module index from `start` to `stop - 1`. -/
 private def foldModules (ngen : NameGenerator) (errorRef : ImportErrorRef)
     (env : Environment) (init : α) (act : α → Name → ConstantInfo → MetaM α)
     (mctx : Meta.Context) (cctx : Core.Context)
-    (start stop : Nat) : BaseIO α := do
-  let mstate ← IO.mkRef {}
-  let cstate ← IO.mkRef { env, ngen }
-  let mut a := init
-  for i in start...stop do
-    let mname := env.header.moduleNames[i]!
-    let mdata := env.header.moduleData[i]!
-    a ← visitModule env errorRef mctx mstate cctx cstate act
-      mname mdata.constNames mdata.constants a
-  return a
+    (start stop : Nat) : EIO Exception α := do
+  let go : MetaM α := do
+    let mut a := init
+    for i in start...stop do
+      Core.checkInterrupted
+      let modName := env.header.moduleNames[i]!
+      let { constNames, constants, .. } := env.header.moduleData[i]!
+      for h : i in *...constNames.size do
+        let name := constNames[i]
+        let constInfo := constants[i]!
+        a ← visitConst env modName errorRef act a name constInfo
+    return a
+  go.run' mctx {} |>.run' cctx { env, ngen }
 
 private def getChildNgen : CoreM NameGenerator := do
   let ngen ← getNGen
@@ -123,7 +99,7 @@ def logImportFailures (ref : ImportErrorRef) : CoreM Unit := do
 This uses paralellism, with each thread independently folding over part of the environment.
 Hence, the result is given as an array of tasks, which can the be combined using `Array.foldl`. -/
 def foldEnv (init : α) (cfg : Config) (act : α → Name → ConstantInfo → MetaM α)
-    (constantsPerTask : Nat := 5000) : CoreM (Array (Task α) × ImportErrorRef) := do
+    (constantsPerTask : Nat := 5000) : CoreM (Array (Task (Except Exception α)) × ImportErrorRef) := do
   let env ← getEnv
   let numModules := env.header.moduleData.size
   let mctx := { keyedConfig := cfg.toConfigWithKey }
@@ -131,7 +107,8 @@ def foldEnv (init : α) (cfg : Config) (act : α → Name → ConstantInfo → M
   let errorRef ← ImportErrorRef.new
   let rec
     /-- Allocate constants to tasks according to `constantsPerTask`. -/
-    go (tasks : Array (Task α)) (start cnt idx : Nat) : CoreM (Array (Task α)) := do
+    go (tasks : Array (Task (Except Exception α))) (start cnt idx : Nat) :
+        CoreM (Array (Task (Except Exception α))) := do
       if h : idx < numModules then
         let mdata := env.header.moduleData[idx]
         let cnt := cnt + mdata.constants.size
@@ -155,14 +132,11 @@ def foldCurrModule (init : α) (cfg : Config) (act : α → Name → ConstantInf
     CoreM (α × ImportErrorRef) := do
   let env ← getEnv
   let modName := env.header.mainModule
-  let mctx := { keyedConfig := cfg.toConfigWithKey }
-  let cctx := { (← read) with maxHeartbeats := 0 }
   let errorRef ← ImportErrorRef.new
   let ngen ← getChildNgen
-  let mstate ← IO.mkRef {}
-  let cstate ← IO.mkRef { env, ngen }
-  let result ← liftM <| env.constants.map₂.foldlM (init := init)
-    (visitConst env modName errorRef mctx mstate cctx cstate act)
+  let go : MetaM α := env.constants.map₂.foldlM (visitConst env modName errorRef act) init
+  let result ← go.run' { keyedConfig := cfg.toConfigWithKey } {}
+    |>.run' { (← read) with maxHeartbeats := 0 } { env, ngen }
   return (result, errorRef)
 
 end InfoviewSearch

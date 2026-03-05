@@ -209,14 +209,13 @@ public def computeImportDiscrTrees (choice : Choice) : CoreM Unit := do
   }
   unless choice.any do return
   let (tasks, errors) ← foldEnv {} librarySearchIndexConfig (Entries.addConst choice)
-  let pre : PreDiscrTrees := tasks.foldl (·.append ·.get) {}
+  let pre : PreDiscrTrees ← MonadExcept.ofExcept <|
+    tasks.foldlM (fun pre task ↦ pre.append <$> task.get) {}
   if choice.rw then setIfNone rwRef pre.rw.toRefinedDiscrTree
   if choice.grw then setIfNone grwRef pre.grw.toRefinedDiscrTree
   if choice.app then setIfNone appRef pre.app.toRefinedDiscrTree
   if choice.appAt then setIfNone appAtRef pre.appAt.toRefinedDiscrTree
-  unless (← errors.errors.get).isEmpty do
-    logImportFailures errors
-    throwError "Some errors occurred when building the discrimination tree."
+  logImportFailures errors
 where
   setIfNone {α} (ref : IO.Ref (Option α)) (a : α) : BaseIO Unit := do
     if (← ref.get).isNone then
