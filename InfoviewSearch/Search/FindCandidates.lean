@@ -110,9 +110,19 @@ public structure Choice where
 
 def Choice.any (c : Choice) : Bool := c.rw || c.grw || c.app || c.appAt
 
+/-- Return true if `declName` is automatically generated,
+or otherwise unsuitable as a lemma suggestion. -/
+def blacklist (env : Environment) (declName : Name) : Bool :=
+  LazyDiscrTree.blacklistInsertion env declName ||
+  declName.isMetaprogramming ||
+  Linter.isDeprecated env declName ||
+  match declName with | .str _ s => s == "eq_def" | _ => false
+
 /-- Given a constant, compute what needs to be added to the various discrimination trees. -/
-def Entries.addConst (choice : Choice) (entries : Entries) (name : Name) (cinfo : ConstantInfo) :
-    MetaM Entries := do
+def Entries.addConst (choice : Choice) (entries : Entries)
+    (env : Environment) (name : Name) (cinfo : ConstantInfo) : MetaM Entries := do
+  if cinfo.isUnsafe then return entries
+  if blacklist env name then return entries
   setMCtx {}
   let (xs, _, e) ← forallMetaTelescope cinfo.type
   let mut { rw, grw, app, appAt } := entries
@@ -223,8 +233,9 @@ where
 
 public def computeModuleDiscrTrees (choice : Choice) (parentDecl? : Option Name) :
     CoreM PreDiscrTrees := do
-  let (pre, errors) ← foldCurrModule {} librarySearchIndexConfig fun entries name cinfo ↦
-    if name == parentDecl? then pure entries else entries.addConst choice name cinfo
+  let (pre, errors) ← foldCurrModule {} librarySearchIndexConfig fun entries env name cinfo ↦ do
+    if name == parentDecl? then return entries
+    entries.addConst choice env name cinfo
   logImportFailures errors
   return .append {} pre
 

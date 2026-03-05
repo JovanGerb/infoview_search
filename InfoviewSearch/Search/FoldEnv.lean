@@ -35,14 +35,6 @@ structure ImportErrorRef where
 def ImportErrorRef.new : BaseIO ImportErrorRef := do
   return { errors := ← IO.mkRef #[] }
 
-/-- Return true if `declName` is automatically generated,
-or otherwise unsuitable as a lemma suggestion. -/
-def blacklistInsertion (env : Environment) (declName : Name) : Bool :=
-  LazyDiscrTree.blacklistInsertion env declName ||
-  declName.isMetaprogramming ||
-  Linter.isDeprecated env declName ||
-  match declName with | .str _ s => s == "eq_def" | _ => false
-
 /--
 Run `act name constInfo`.
 
@@ -50,15 +42,12 @@ Note: It is expensive to create two new `IO.Ref`s for every `MetaM` operation,
   so instead we reuse the same refs `mstate` and `cstate`. These are also used to
   remember the cache, and the name generator across the operations.
 -/
-@[inline] private def visitConst (env : Environment) (modName : Name) (errorRef : ImportErrorRef)
-    (act : α → Name → ConstantInfo → MetaM α)
+@[inline]
+private def visitConst (env : Environment) (modName : Name) (errorRef : ImportErrorRef)
+    (act : α → Environment → Name → ConstantInfo → MetaM α)
     (a : α) (name : Name) (constInfo : ConstantInfo) : MetaM α := do
-  -- here we use an if-then-else clause instead of the more stylish if-then-return,
-  -- because it compiles to more performant code
-  if constInfo.isUnsafe then pure a else
-  if blacklistInsertion env name then pure a else
   try
-    act a name constInfo
+    act a env name constInfo
   catch e =>
     let i : ImportFailure := {
       module := modName,
@@ -68,8 +57,9 @@ Note: It is expensive to create two new `IO.Ref`s for every `MetaM` operation,
     return a
 
 /-- Loop through all constants in modules with module index from `start` to `stop - 1`. -/
+@[specialize]
 private def foldModules (ngen : NameGenerator) (errorRef : ImportErrorRef)
-    (env : Environment) (init : α) (act : α → Name → ConstantInfo → MetaM α)
+    (env : Environment) (init : α) (act : α → Environment → Name → ConstantInfo → MetaM α)
     (mctx : Meta.Context) (cctx : Core.Context)
     (start stop : Nat) : EIO Exception α := do
   let go : MetaM α := do
@@ -98,7 +88,8 @@ def logImportFailures (ref : ImportErrorRef) : CoreM Unit := do
 /-- Fold through all imported constants using `act`.
 This uses paralellism, with each thread independently folding over part of the environment.
 Hence, the result is given as an array of tasks, which can the be combined using `Array.foldl`. -/
-def foldEnv (init : α) (cfg : Config) (act : α → Name → ConstantInfo → MetaM α)
+@[specialize]
+def foldEnv (init : α) (cfg : Config) (act : α → Environment → Name → ConstantInfo → MetaM α)
     (constantsPerTask : Nat := 5000) : CoreM (Array (Task (Except Exception α)) × ImportErrorRef) := do
   let env ← getEnv
   let numModules := env.header.moduleData.size
@@ -107,6 +98,7 @@ def foldEnv (init : α) (cfg : Config) (act : α → Name → ConstantInfo → M
   let errorRef ← ImportErrorRef.new
   let rec
     /-- Allocate constants to tasks according to `constantsPerTask`. -/
+    @[specialize]
     go (tasks : Array (Task (Except Exception α))) (start cnt idx : Nat) :
         CoreM (Array (Task (Except Exception α))) := do
       if h : idx < numModules then
@@ -128,7 +120,8 @@ def foldEnv (init : α) (cfg : Config) (act : α → Name → ConstantInfo → M
     termination_by env.header.moduleData.size - idx
   return (← go #[] 0 0 0, errorRef)
 
-def foldCurrModule (init : α) (cfg : Config) (act : α → Name → ConstantInfo → MetaM α) :
+@[specialize]
+def foldCurrModule (init : α) (cfg : Config) (act : α → Environment → Name → ConstantInfo → MetaM α) :
     CoreM (α × ImportErrorRef) := do
   let env ← getEnv
   let modName := env.header.mainModule

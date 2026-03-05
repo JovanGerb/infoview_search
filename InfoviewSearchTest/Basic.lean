@@ -338,8 +338,6 @@ example (p q : Prop) (h : ¬ p) : q := by
   exact test_sorry
 
 
--- TODO: `CancelDenoms.derive_trans` namespace
-
 /-
 TODO: add tests for
 
@@ -354,7 +352,6 @@ TODO: add tests for
 
 TODO:
 
-- Note: there are theorems with `Simproc` in the name, which should be excluded.
 - Allow a user-defined filter in addition to the blacklist?
 - improve `nth_rw` heuristic & add a test. Maybe, there should be a `set_option` that determines
   whether to print arguments explicitly.
