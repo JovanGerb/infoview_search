@@ -100,6 +100,9 @@ private def rerenderStatus (computations : Std.HashMap String Nat) : Html :=
 @[server_rpc_method]
 public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
   RequestM.asTask do
+  let cancelTk ← IO.CancelToken.new
+  let oldTk ← (props.cancelTkRef.val.swap cancelTk)
+  oldTk.set
   let some loc := props.selectedLocations.back? | return .text ""
   let doc ← RequestM.readDoc
   if loc.loc matches .hypValue .. then
@@ -116,13 +119,14 @@ public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
       goals.contains loc.mvarId
     | return .text "infoview_search: Please reload the tactic state"
   goal.ctx.val.runMetaM {} do loc.mvarId.withContext do
+    withTheReader Core.Context ({· with cancelTk? := cancelTk }) do
     let (statusHtml, statusToken) ← mkRefreshComponent ∅ rerenderStatus
     let targetHtml ←
       if let .hyp h := loc.loc then
         pure <span> hypothesis {← exprToHtml (.fvar h)} </span>
       else
         Meta.viewSubexpr (fun _ e ↦ exprToHtml e) loc.pos (← loc.rootExpr)
-    let html ← mkCancelRefreshComponent props.cancelTkRef.val
+    let html ← mkRefreshComponentM
       (.text "infoview_search has started searching.") fun masterToken ↦ do
       (generateSuggestions loc parentDecl? masterToken).run {
         onGoal, stx, masterToken, statusToken

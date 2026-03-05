@@ -235,21 +235,6 @@ As long as the computation hasn't finished, the result will show up as `initial`
 def mkLazyHtml (k : m (Option Html)) (initial : Html := .text "") : m Html := do
   mkRefreshComponentM initial (do if let some html ← k then ·.set html)
 
-/-- Create a `RefreshComponent`. Explicitly support cancellation by creating a cancel token,
-and setting the previous cancel token. This is useful when the component depends on the selections
-in the goal, so that after making a new selection, the previous computation is cancelled.
-
-Note: The cancel token is only set when a new computation is started.
-  When the infoview is closed, this unfortunately doesn't set the cancel token. -/
-def mkCancelRefreshComponent [MonadWithReaderOf Core.Context m]
-    (cancelTkRef : IO.Ref IO.CancelToken) (initial : Html) (k : RefreshToken Html → m Unit) :
-    m Html := do
-  let cancelTk ← IO.CancelToken.new
-  let oldTk ← (cancelTkRef.swap cancelTk : BaseIO _)
-  oldTk.set
-  withTheReader Core.Context ({· with cancelTk? := cancelTk }) <|
-    mkRefreshComponentM initial k
-
 abbrev CancelTokenRef := IO.Ref IO.CancelToken
 
 instance : TypeName CancelTokenRef := unsafe .mk CancelTokenRef ``CancelTokenRef
