@@ -73,6 +73,7 @@ def evalNode (trie : TrieIndex) : TreeM α (Trie α) := do
   let numTasks := node.pending.size / 5000 + 1
   let tasks ← numTasks.foldM (init := #[]) fun i _ tasks ↦ do
     return tasks.push <| ← BaseIO.asTask <| (← dropM do
+      withCurrHeartbeats do
       processPendingRange node.pending (i * 5000) ((i + 1) * 5000)).catchExceptions fun ex ↦ do
         if let .internal id _ := ex then
           if id == interruptExceptionId then
@@ -279,8 +280,6 @@ def getMatchAux (root : Std.HashMap Key TrieIndex) (e : Expr) (unify matchRootSt
 -- Avoid name collision with the `getMatch` from mathlib.
 public def getMatchTemp (d : RefinedDiscrTree α) (e : Expr) (unify matchRootStar : Bool) :
     MetaM (MatchResult α × RefinedDiscrTree α) := do
-  -- Make sure that heartbeats don't limit us here.
-  withTheReader Core.Context ({ · with maxHeartbeats := 0 }) do
   let (result, tries) ← (getMatchAux d.root e unify matchRootStar).run d.tries
   return (result, { d with tries })
 

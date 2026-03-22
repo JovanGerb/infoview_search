@@ -119,8 +119,8 @@ def blacklist (env : Environment) (declName : Name) : Bool :=
   match declName with | .str _ s => s == "eq_def" | _ => false
 
 /-- Given a constant, compute what needs to be added to the various discrimination trees. -/
-def Entries.addConst (choice : Choice) (entries : Entries)
-    (env : Environment) (name : Name) (cinfo : ConstantInfo) : MetaM Entries := do
+def Entries.addConst (choice : Choice) (env : Environment) (entries : Entries)
+    (name : Name) (cinfo : ConstantInfo) : MetaM Entries := do
   if cinfo.isUnsafe then return entries
   if blacklist env name then return entries
   setMCtx {}
@@ -218,7 +218,7 @@ public def computeImportDiscrTrees (choice : Choice) : CoreM Unit := do
     appAt := choice.appAt && (← appAtRef.get).isNone
   }
   unless choice.any do return
-  let (tasks, errors) ← foldEnv {} librarySearchIndexConfig (Entries.addConst choice)
+  let (tasks, errors) ← foldEnv {} librarySearchIndexConfig (Entries.addConst choice (← getEnv))
   let pre : PreDiscrTrees ← MonadExcept.ofExcept <|
     tasks.foldlM (fun pre task ↦ pre.append <$> task.get) {}
   if choice.rw then setIfNone rwRef pre.rw.toRefinedDiscrTree
@@ -233,7 +233,8 @@ where
 
 public def computeModuleDiscrTrees (choice : Choice) (parentDecl? : Option Name) :
     CoreM PreDiscrTrees := do
-  let (pre, errors) ← foldCurrModule {} librarySearchIndexConfig fun entries env name cinfo ↦ do
+  let env ← getEnv
+  let (pre, errors) ← foldCurrModule {} librarySearchIndexConfig fun entries name cinfo ↦ do
     if name == parentDecl? then return entries
     entries.addConst choice env name cinfo
   logImportFailures errors

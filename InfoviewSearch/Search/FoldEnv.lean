@@ -47,11 +47,11 @@ def logImportFailures (ref : ImportErrorRef) : CoreM Unit := do
 
 /-- Run `act env name constInfo`, catching potential errors. -/
 @[inline]
-private def visitConst (env : Environment) (modName : Name) (errorRef : ImportErrorRef)
-    (act : α → Environment → Name → ConstantInfo → MetaM α)
+private def visitConst (modName : Name) (errorRef : ImportErrorRef)
+    (act : α → Name → ConstantInfo → MetaM α)
     (a : α) (name : Name) (constInfo : ConstantInfo) : MetaM α := do
   try
-    act a env name constInfo
+    act a name constInfo
   catch e =>
     let i : ImportFailure := {
       module := modName,
@@ -63,9 +63,10 @@ private def visitConst (env : Environment) (modName : Name) (errorRef : ImportEr
 /-- Loop through all constants in modules with module index from `start` to `stop - 1`. -/
 @[specialize]
 private def foldModules (ngen : NameGenerator) (errorRef : ImportErrorRef)
-    (env : Environment) (init : α) (act : α → Environment → Name → ConstantInfo → MetaM α)
+    (env : Environment) (init : α) (act : α → Name → ConstantInfo → MetaM α)
     (mctx : Meta.Context) (cctx : Core.Context)
     (start stop : Nat) : EIO Exception α := do
+  let cctx := { cctx with initHeartbeats := ← IO.getNumHeartbeats }
   let go : MetaM α := do
     let mut a := init
     for i in start...stop do
@@ -75,7 +76,7 @@ private def foldModules (ngen : NameGenerator) (errorRef : ImportErrorRef)
       for h : i in *...constNames.size do
         let name := constNames[i]
         let constInfo := constants[i]!
-        a ← visitConst env modName errorRef act a name constInfo
+        a ← visitConst modName errorRef act a name constInfo
     return a
   go.run' mctx {} |>.run' cctx { env, ngen }
 
@@ -83,13 +84,13 @@ private def foldModules (ngen : NameGenerator) (errorRef : ImportErrorRef)
 This uses paralellism, with each thread independently folding over part of the environment.
 Hence, the result is given as an array of tasks, which can then be combined using `Array.foldl`. -/
 @[specialize]
-def foldEnv (init : α) (cfg : Config) (act : α → Environment → Name → ConstantInfo → MetaM α)
+def foldEnv (init : α) (cfg : Config) (act : α → Name → ConstantInfo → MetaM α)
     (constantsPerTask : Nat := 5000) :
     CoreM (Array (Task (Except Exception α)) × ImportErrorRef) := do
   let env ← getEnv
   let numModules := env.header.moduleData.size
   let mctx := { keyedConfig := cfg.toConfigWithKey }
-  let cctx := { (← read) with maxHeartbeats := 0 }
+  let cctx ← read
   let errorRef ← ImportErrorRef.new
   let mut tasks := #[]
   let mut start := 0
@@ -112,13 +113,13 @@ def foldEnv (init : α) (cfg : Config) (act : α → Environment → Name → Co
 
 @[specialize]
 def foldCurrModule (init : α) (cfg : Config)
-    (act : α → Environment → Name → ConstantInfo → MetaM α) : CoreM (α × ImportErrorRef) := do
+    (act : α → Name → ConstantInfo → MetaM α) : CoreM (α × ImportErrorRef) := do
   let env ← getEnv
   let modName := env.header.mainModule
   let errorRef ← ImportErrorRef.new
   let (childNGen, parentNGen) := (← getNGen).mkChild
   setNGen parentNGen
-  let go : MetaM α := env.constants.map₂.foldlM (visitConst env modName errorRef act) init
+  let go : MetaM α := env.constants.map₂.foldlM (visitConst modName errorRef act) init
   let result ← go.run' { keyedConfig := cfg.toConfigWithKey } {}
     |>.run' { (← read) with maxHeartbeats := 0 } { env, ngen := childNGen }
   return (result, errorRef)
