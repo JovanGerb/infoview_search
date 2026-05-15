@@ -6,7 +6,6 @@ Authors: Jovan Gerbscheid
 module
 
 public import InfoviewSearch.Search.FindCandidates
-public meta import InfoviewSearch.RefreshComponent -- TODO: this should not need `meta`...
 
 /-!
 # A widget for showing library search results
@@ -84,19 +83,20 @@ def getCandidates (rootExpr subExpr : Expr) (gpos : Array GrwPos)
 
 TODO: use Lean's `Mutex` to avoid the polling loop? -/
 @[specialize]
-private partial def forTasksM {α} (tasks : Array (Task α)) (f : α → MetaM Unit) : MetaM Unit := do
-  if tasks.isEmpty then return
+private partial def foldTasksM {α β} (tasks : Array (Task β)) (init : α) (f : α → β → MetaM α) :
+    MetaM α := do
+  if tasks.isEmpty then return init
   Core.checkInterrupted
-  if ← ↑(tasks.anyM IO.hasFinished) then
-    let tasks ← tasks.filterM fun task ↦ do
-      let finished ← IO.hasFinished task
-      if finished then
-        f task.get
-      return !finished
-    forTasksM tasks f
+  if ← (tasks.anyM IO.hasFinished : BaseIO _) then
+    let (a, tasks) ← tasks.foldlM (init := (init, #[])) fun (a, tasks) task ↦ do
+      if ← IO.hasFinished task then
+        return (← f a task.get, tasks)
+      else
+        return (a, tasks.push task)
+    foldTasksM tasks a f
   else
     IO.sleep 10
-    forTasksM tasks f
+    foldTasksM tasks init f
 
 /-- Spawn tasks for the given candidate premises and
 return an HTML that shows the incoming results -/
@@ -110,23 +110,30 @@ where
   go {α β} [Ord α] [Inhabited α] (tactic : String) (isDup : α → α → MetaM Bool)
       (candidates : Array β) (premise : β → Premise)
       (mkSuggestion : β → InfoviewSearchM (Result α)) : InfoviewSearchM Html := do
-    let (html, token) ← mkRefreshComponent {} (renderSection tactic kind)
+    let (html, token) ← mkRefreshComponent
     let tasks ← candidates.mapM fun lem ↦ spawnTask (premise lem) (mkSuggestion lem)
     discard <| BaseIO.asTask (prio := .dedicated) <| (← dropM <| trackingComputation tactic do
-      forTasksM tasks fun
-        | .ok (some res) => insertResult token res isDup
-        | .ok none => pure ()
-        | .error e => SectionToken.pushError token e).catchExceptions fun ex ↦ do
-          if let .internal ex := ex then
-            if ex == interruptExceptionId then
-              return
-          (panic! s!"Error when processing {tactic}: {← ex.toMessageData.toString}")
+      discard <| foldTasksM tasks ({} : SectionState α) fun s ↦ fun
+        | .ok (some res) => do
+          let s ← s.insertResult res isDup
+          token.updateLazy (renderSection tactic kind s)
+          return s
+        | .ok none => pure s
+        | .error e => do
+          let s := s.pushError e
+          token.updateLazy (renderSection tactic kind s)
+          return s
+      ).catchExceptions fun ex ↦ do
+        if let .internal ex := ex then
+          if ex == interruptExceptionId then
+            return
+        (panic! s!"Error when processing {tactic}: {← ex.toMessageData.toString}")
     return html
 
 set_option linter.style.emptyLine false in
 public def librarySearchSuggestions (rootExpr subExpr : Expr)
     (rwKind : RwKind) (parentDecl? : Option Name)
-    (token : RefreshToken Html) : InfoviewSearchM Unit := do
+    (token : RefreshToken) : InfoviewSearchM Unit := do
   Core.checkInterrupted
   let mut sections := #[]
 
@@ -141,14 +148,14 @@ public def librarySearchSuggestions (rootExpr subExpr : Expr)
   }
 
   Core.checkInterrupted
-  token.set <div> loading local hypotheses ⏳ </div>
+  token.update <div> loading local hypotheses ⏳ </div>
   let pres ← computeLCtxDiscrTrees choice fvarId?
   Core.checkInterrupted
   for cand in ← getCandidates rootExpr subExpr gpos rwKind pres do
     sections := sections.push (← runSuggestions .hyp cand)
 
   Core.checkInterrupted
-  token.set <div>
+  token.update <div>
     {.element "div" #[] sections}
     <div> loading theorem in the current file ⏳ </div>
     </div>
@@ -158,21 +165,21 @@ public def librarySearchSuggestions (rootExpr subExpr : Expr)
     sections := sections.push (← runSuggestions .currFile cand)
 
   Core.checkInterrupted
-  token.set <div>
+  token.update <div>
     {.element "div" #[] sections}
     <div> initializing discrimination trees ⏳ </div>
     </div>
   computeImportDiscrTrees choice
   Core.checkInterrupted
   let reportProgress (tac : String) :=
-    token.set <div>
+    token.update <div>
       {.element "div" #[] sections}
       <div> {.text s!"loading imported `{tac}` theorems ⏳"} </div>
       </div>
   for cand in ← getImportCandidates rootExpr subExpr gpos rwKind reportProgress do
     sections := sections.push (← runSuggestions .imported cand)
 
-  token.set <div>
+  token.update <div>
     {.element "div" #[] sections}
     </div>
   unless sections.isEmpty do

@@ -34,8 +34,8 @@ partial def getHtmlComponentProps {Props} [RpcEncodable Props] (html : Html) (c 
       let props : FilterDetailsProps ← getProps lazy
       arr ← getHtmlComponentProps props.all c arr
     if hash == RefreshComponent.javascriptHash then
-      let props : RefreshComponentProps ← getProps lazy
-      arr ← getHtmlComponentProps (← props.state.val.getFinalHtml) c arr
+      let props : RefreshComponent.Props ← getProps lazy
+      arr ← getHtmlComponentProps (← getFinalHtml props.state.val) c arr
     htmls.foldlM (fun arr html ↦ getHtmlComponentProps html c arr) arr
 where
   getProps {Props} [RpcEncodable Props] (lazy : LazyEncodable Json) :
@@ -44,6 +44,13 @@ where
     match rpcDecode json state with
     | .ok props => return props
     | .error e => throwError "An error occurred when looking at the HTML: {e}"
+/- Wait until the state has finished refreshing, and the return the final HTML.
+This is useful for inspecting `Html` from within Lean. -/
+  getFinalHtml (info : RefreshRef) : BaseIO Html := do
+  let { curr, next, .. } ← info.ref.get
+  if next.get.isNone then
+    return curr.get
+  getFinalHtml info
 
 def trimWhitespace (string : String) : String :=
   "\n".intercalate <| ((string.trimAscii.split '\n').map (·.trimAscii.toString)).toList
@@ -65,8 +72,8 @@ scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic
   let text ← getFileMap
   let some cursorPos := (← getRef).getPos? | throwError "found no valid cursor position"
   let cursorPos := text.utf8PosToLspPos cursorPos
-  let (_, statusToken) ← mkRefreshComponent ∅ fun _ ↦ .text ""
-  let (html, masterToken) ← mkRefreshComponent (.text "") id
+  let (_, statusToken) ← mkRefreshComponent
+  let (html, masterToken) ← mkRefreshComponent
   let ctx := {
     cursorPos, masterToken, statusToken
     «meta» := { (default : DocumentMeta) with text }
@@ -77,7 +84,7 @@ scoped elab "search_test" hyp?:(ident)? pos?:(str)? "=>" expecteds:str+ : tactic
     hyp?
     pos := pos?.getD .root
   }
-  (generateSuggestions { loc, mvarId } none masterToken).run ctx
+  (generateSuggestions { loc, mvarId } none masterToken).run ctx |>.run' {}
   let props ← getHtmlComponentProps html MakeEditLink #[]
   let suggested := props.flatMap (·.edit.edits.map (trimWhitespace ·.newText))
   for expected in expecteds do

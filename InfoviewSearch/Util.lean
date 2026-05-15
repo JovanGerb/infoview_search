@@ -12,7 +12,7 @@ public import Mathlib.Tactic.NthRewrite
 public import Mathlib.Tactic.DepRewrite
 public import Batteries.Tactic.PermuteGoals
 public meta import Mathlib.Data.String.Defs
-public import InfoviewSearch.RefreshComponent
+public import ProofWidgets.Component.RefreshComponent
 public meta import InfoviewSearch.ForUpstream
 
 public meta section
@@ -70,6 +70,11 @@ def toHtml : Premise → MetaM Html
 end Premise
 
 /-- The information required for pasting a suggestion into the editor -/
+structure State where
+  /-- The ongoing computations. -/
+  status : Std.HashMap String Nat := {}
+
+/-- The information required for pasting a suggestion into the editor -/
 structure Context where
   /-- The current document -/
   «meta» : DocumentMeta
@@ -86,9 +91,9 @@ structure Context where
   progress? : IO.Ref Bool
   /-- The token for updating the main HTML body of suggestions.
   This is used for displaying a message that no progress has happened. -/
-  masterToken : RefreshToken Html
+  masterToken : RefreshToken
   /-- The token for the HTML that represents the state of the ongoing computations. -/
-  statusToken : RefreshToken (Std.HashMap String Nat)
+  statusToken : RefreshToken
   /-- The main goal. -/
   goal : MVarId
   /-- The selected hypothesis, if any. -/
@@ -96,7 +101,7 @@ structure Context where
   /-- The position of the selected subexpression. -/
   pos : SubExpr.Pos
 
-abbrev InfoviewSearchM := ReaderT Context MetaM
+abbrev InfoviewSearchM := ReaderT Context StateRefT State MetaM
 
 def markProgress : InfoviewSearchM Unit := do
   if !(← (← read).progress?.get) then
@@ -104,8 +109,8 @@ def markProgress : InfoviewSearchM Unit := do
 
 def checkProgress : InfoviewSearchM Unit := do
   if !(← (← read).progress?.get) then
-    if (← (← read).statusToken.getCurrState).isEmpty then
-      (← read).masterToken.set <| .text "No suggestions were found."
+    if ((← get).status).isEmpty then
+      (← read).masterToken.update <| .text "No suggestions were found."
 
 def getHypIdent? : InfoviewSearchM (Option Ident) := do
   let some fvarId := (← read).hyp? | return none
@@ -116,10 +121,14 @@ def getHypIdent! : InfoviewSearchM Ident := do
   return mkIdent (← fvarId.getUserName)
 
 def trackingComputation {α} (name : String) (k : InfoviewSearchM α) : InfoviewSearchM α := do
-  (← read).statusToken.modify (·.alter name fun | none => some 0 | some n => some (n + 1))
+  modify (fun s ↦ { s with status := s.status.alter name fun
+    | none => some 0
+    | some n => some (n + 1) })
   try k
   finally
-    (← read).statusToken.modify (·.alter name fun | some (n + 1) => some n | _ => none)
+    modify (fun s ↦ { s with status := s.status.alter name fun
+      | some (n + 1) => some n
+      | _ => none })
     checkProgress
 
 section Meta
@@ -269,8 +278,7 @@ def mkIncrementalSuggestions (name : String)
     k fun html ↦ do
       markProgress
       htmls.modify (·.push html)
-      token.set (Html.element "div" #[] (← htmls.get))
-
+      token.update (.element "div" #[] (← htmls.get))
 
 end Widget
 

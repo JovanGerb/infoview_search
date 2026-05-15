@@ -66,19 +66,20 @@ where
       catch _ =>
         pure false
 
-def insertResult (token : RefreshToken (SectionState α)) (res : Result α)
-    (isDup : α → α → MetaM Bool) : MetaM Unit := fun c₁ c₂ c₃ c₄ ↦
-  token.modifyM fun { results, errors } ↦ do
-    let results ← (res.insertInArray results isDup c₁ c₂ c₃ c₄).catchExceptions fun ex ↦ do
-      if let .internal id _ := ex then
-        if id == interruptExceptionId then
-          return default
-      panic! s!"an error occurred when checking for duplicate entries:\n\
-        {← ex.toMessageData.toString}"
-    return { results, errors }
+def SectionState.insertResult (s : SectionState α) (res : Result α)
+    (isDup : α → α → MetaM Bool) : MetaM (SectionState α) := do
+  let { results, errors } := s
+  let results ← fun c₁ c₂ c₃ c₄ ↦
+    (res.insertInArray results isDup c₁ c₂ c₃ c₄).catchExceptions fun ex ↦ do
+    if let .internal id _ := ex then
+      if id == interruptExceptionId then
+        return default
+    panic! s!"an error occurred when checking for duplicate entries:\n{← ex.toMessageData.toString}"
+  return { results, errors }
 
-def SectionToken.pushError (token : RefreshToken (SectionState α)) (error : Html) : BaseIO Unit :=
-  token.modifyM fun { results , errors } ↦ return { results, errors := errors.push error }
+def SectionState.pushError (s : SectionState α) (error : Html) : SectionState α :=
+  let { results , errors } := s
+  { results, errors := errors.push error }
 
 def renderErrors (errors : Array Html) : Html :=
   <details «open»={true}>

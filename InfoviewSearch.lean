@@ -27,7 +27,7 @@ def viewKAbstractSubExpr' {m α}
 set_option linter.style.emptyLine false
 
 public def generateSuggestions (loc : SubExpr.GoalsLocation)
-    (parentDecl? : Option Name) (token : RefreshToken Html) : InfoviewSearchM Unit := do
+    (parentDecl? : Option Name) (token : RefreshToken) : InfoviewSearchM Unit := do
   -- TODO: instead of just putting `✝` after inaccessible names,
   -- we should figure out how to use `rename_i` to actually refer to shadowed local variables.
   let lctx := (← getLCtx) |>.sanitizeNames.run' {options := (← getOptions)}
@@ -41,10 +41,10 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
     | .hyp fvarId =>
       if let some html ← suggestForHyp fvarId then
         markProgress
-        token.set html
+        token.update html
       return
     | .hypValue .. =>
-      token.set <| .text "internal infoview_search error: selected location is a `.hypValue`"
+      token.update <| .text "internal infoview_search error: selected location is a `.hypValue`"
       return
   let rootExpr ← match fvarId? with
     | some fvarId => fvarId.getType
@@ -80,9 +80,9 @@ public def generateSuggestions (loc : SubExpr.GoalsLocation)
     markProgress
     htmls := htmls.push html
 
-  let (searchHtml, token') ← mkRefreshComponent (.text "") id
+  let (searchHtml, token') ← mkRefreshComponent
   htmls := htmls.push searchHtml
-  token.set (.element "div" #[("style", json% {"marginLeft" : "4px"})] htmls)
+  token.update (.element "div" #[("style", json% {"marginLeft" : "4px"})] htmls)
 
   librarySearchSuggestions rootExpr subExpr rwKind parentDecl? token'
 
@@ -97,11 +97,8 @@ private def rerenderStatus (computations : Std.HashMap String Nat) : Html :=
     <span title={title}> {.text "⏳"} </span>
 
 @[server_rpc_method]
-public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
+public def rpc (props : PanelWidgetProps) : RequestM (RequestTask Html) :=
   RequestM.asTask do
-  let cancelTk ← IO.CancelToken.new
-  let oldTk ← (props.cancelTkRef.val.swap cancelTk)
-  oldTk.set
   let some loc := props.selectedLocations.back? | return .text ""
   let doc ← RequestM.readDoc
   if loc.loc matches .hypValue .. then
@@ -118,8 +115,7 @@ public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
       goals.contains loc.mvarId
     | return .text "infoview_search: Please reload the tactic state"
   goal.ctx.val.runMetaM {} do loc.mvarId.withContext do
-    withTheReader Core.Context ({· with cancelTk? := cancelTk }) do
-    let (statusHtml, statusToken) ← mkRefreshComponent ∅ rerenderStatus
+    let (statusHtml, statusToken) ← mkRefreshComponent
     let targetHtml ←
       if let .hyp h := loc.loc then
         pure <span> hypothesis {← exprToHtml (.fvar h)} </span>
@@ -135,7 +131,7 @@ public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
         goal := loc.mvarId
         hyp? := loc.fvarId?
         pos := loc.pos
-      }
+      } |>.run' {}
     return <details «open»={true}>
       <summary className="mv2 pointer">
         infoview_search suggestions for {targetHtml}: {statusHtml}
@@ -146,11 +142,13 @@ public def rpc (props : CancelPanelWidgetProps) : RequestM (RequestTask Html) :=
 
 /-- The component called by the `#infoview_search` command. -/
 @[widget_module]
-public def infoviewSearchComponent : Component CancelPanelWidgetProps :=
+public def infoviewSearchComponent : Component PanelWidgetProps :=
   mk_rpc_widget% rpc
 
 elab "#infoview_search" : command => do
-  let widget ← Elab.Command.liftCoreM <| mkCancelPanelWidget infoviewSearchComponent
+  let widget ← Elab.Command.liftCoreM <|
+    WidgetInstance.ofHash infoviewSearchComponent.javascriptHash (return json% {})
+
   addPanelWidgetLocal widget
 
 end InfoviewSearch
