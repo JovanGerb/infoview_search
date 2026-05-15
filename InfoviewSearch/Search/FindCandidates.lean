@@ -9,7 +9,7 @@ public import InfoviewSearch.Search.Rewrite
 public import InfoviewSearch.Search.GRewrite
 public import InfoviewSearch.Search.Apply
 public import InfoviewSearch.Search.ApplyAt
-public meta import InfoviewSearch.Search.FoldEnv
+public meta import Mathlib.Lean.FoldEnvironment
 public meta import Mathlib.Lean.Meta.RefinedDiscrTree
 
 /-!
@@ -217,14 +217,15 @@ public def computeImportDiscrTrees (choice : Choice) : CoreM Unit := do
     appAt := choice.appAt && (← appAtRef.get).isNone
   }
   unless choice.any do return
-  let (tasks, errors) ← foldEnv {} librarySearchIndexConfig (Entries.addConst choice (← getEnv))
+  let (tasks, errors) ←
+    foldImportedDecls {} librarySearchIndexConfig (Entries.addConst choice (← getEnv))
   let pre : PreDiscrTrees ← MonadExcept.ofExcept <|
     tasks.foldlM (fun pre task ↦ pre.append <$> task.get) {}
   if choice.rw then setIfNone rwRef pre.rw.toRefinedDiscrTree
   if choice.grw then setIfNone grwRef pre.grw.toRefinedDiscrTree
   if choice.app then setIfNone appRef pre.app.toRefinedDiscrTree
   if choice.appAt then setIfNone appAtRef pre.appAt.toRefinedDiscrTree
-  logImportFailures errors
+  (← errors.get).forM logError
 where
   setIfNone {α} (ref : IO.Ref (Option α)) (a : α) : BaseIO Unit := do
     if (← ref.get).isNone then
@@ -233,10 +234,10 @@ where
 public def computeModuleDiscrTrees (choice : Choice) (parentDecl? : Option Name) :
     CoreM PreDiscrTrees := do
   let env ← getEnv
-  let (pre, errors) ← foldCurrModule {} librarySearchIndexConfig fun entries name cinfo ↦ do
+  let (pre, errors) ← foldCurrFileDecls {} librarySearchIndexConfig fun entries name cinfo ↦ do
     if name == parentDecl? then return entries
     entries.addConst choice env name cinfo
-  logImportFailures errors
+  (← errors.get).forM logError
   return .append {} pre
 
 public def computeLCtxDiscrTrees (choice : Choice) (fvarId? : Option FVarId) :
