@@ -11,8 +11,7 @@ public meta import Mathlib.Lean.Meta.KAbstractPositions
 meta section
 
 namespace InfoviewSearch
-open Lean Meta Server Widget ProofWidgets Jsx
-
+open Lean Meta Server Widget ProofWidgets Jsx Mathlib.Tactic
 
 open RefreshComponent
 

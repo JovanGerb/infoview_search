@@ -104,8 +104,7 @@ def getGrwPos? (rootExpr subExpr : Expr) (pos : SubExpr.Pos) (hyp? : Bool) :
   let dummyGoal ← mkFreshExprMVar imp
   let ref ← IO.mkRef #[]
   try
-    (discard <| dummyGoal.mvarId!.gcongr false []
-      (mainGoalDischarger := dummyDischarger ref hyp? fvar))
+    _ ← dummyGoal.mvarId!.gcongr false |>.run (mainGoalDischarger := dummyDischarger ref hyp? fvar)
   catch ex =>
     if (← ex.toMessageData.toString) != "dummyError" then
       return #[]

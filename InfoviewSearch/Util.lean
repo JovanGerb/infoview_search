@@ -11,8 +11,7 @@ public import Mathlib.Tactic.SimpRw
 public import Mathlib.Tactic.NthRewrite
 public import Mathlib.Tactic.DepRewrite
 public import Batteries.Tactic.PermuteGoals
-public import Mathlib.Data.String.Defs
-public import InfoviewSearch.Conv
+public meta import Mathlib.Data.String.Defs
 public import InfoviewSearch.RefreshComponent
 public meta import InfoviewSearch.ForUpstream
 

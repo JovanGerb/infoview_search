@@ -13,6 +13,8 @@ import Mathlib.Data.Finset.Max
 import Mathlib.SetTheory.ZFC.Basic
 import Mathlib.Algebra.Lie.OfAssociative
 
+import Mathlib
+
 /-!
 This file tests some basic features of `#infoview_search`
 -/
@@ -36,7 +38,7 @@ example (h : 0 + n = n) : n = n + 0 := by
     "rfl"
     "rw [Nat.left_eq_add]"
     "apply Nat.dvd_antisymm"
-  -- TODO: this shouldn't show up
+  -- TODO: this shouldn't show up (should work on new Lean version)
   search_test =>
     "rw [Nat.Simproc.eq_add_gt]"
   search_test h "" => "apply Nat.le.intro at h" "rw [← Nat.beq_eq] at h"
@@ -364,9 +366,6 @@ TODO:
   - `fun_induction`/`fun_cases`?
 
 - The tactics section should be extensible via an attribute.
-
-- Discrimination tree pattern scores.
-  Pattern `Eq Nat a b` should get lower score than `Eq α a a`.
 
 - Improve the pasting feature: independent of where the cursor is, we want to paste the
   tactic in the correct place.
