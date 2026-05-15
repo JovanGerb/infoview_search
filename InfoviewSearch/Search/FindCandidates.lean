@@ -10,7 +10,6 @@ public import InfoviewSearch.Search.GRewrite
 public import InfoviewSearch.Search.Apply
 public import InfoviewSearch.Search.ApplyAt
 public meta import InfoviewSearch.Search.FoldEnv
-public meta import InfoviewSearch.Search.RefinedDiscrTreeLookup
 public meta import Mathlib.Lean.Meta.RefinedDiscrTree
 
 /-!
@@ -254,13 +253,13 @@ public def getImportMatches {α} (ref : IO.Ref (Option (RefinedDiscrTree α)))
   let some tree ← ref.get |
     throwError "Internal infoview_search error: discrimination tree was not computed."
   let (result, newTree) ← withConfig (fun _ ↦ librarySearchIndexConfig) do
-    getMatchTemp tree e false false
+    getMatch tree e false false
   Core.checkInterrupted
   ref.set newTree
   return result
 
 public def getMatches {α} (tree : RefinedDiscrTree α) (e : Expr) : MetaM (MatchResult α) := do
   withConfig (fun _ ↦ librarySearchIndexConfig) do
-    return (← getMatchTemp tree e false false).1
+    return (← getMatch tree e false false).1
 
 end InfoviewSearch

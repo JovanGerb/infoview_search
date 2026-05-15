@@ -13,7 +13,7 @@ import Mathlib.Data.Finset.Max
 import Mathlib.SetTheory.ZFC.Basic
 import Mathlib.Algebra.Lie.OfAssociative
 
-import Mathlib
+-- import Mathlib
 
 /-!
 This file tests some basic features of `#infoview_search`
@@ -38,9 +38,6 @@ example (h : 0 + n = n) : n = n + 0 := by
     "rfl"
     "rw [Nat.left_eq_add]"
     "apply Nat.dvd_antisymm"
-  -- TODO: this shouldn't show up (should work on new Lean version)
-  search_test =>
-    "rw [Nat.Simproc.eq_add_gt]"
   search_test h "" => "apply Nat.le.intro at h" "rw [← Nat.beq_eq] at h"
   search_test h "/0/1" => "rw [Nat.add_comm] at h"
   rfl
@@ -144,7 +141,7 @@ example (f g : Nat → Nat) : (f + g) 2 = f 2 + g 2 := by
     "rw [add_comm (f 2) (g 2)]"
   exact test_sorry
 
--- Test for motive not type correct issue
+-- When the motive is not type correct, suggest `rw!`
 example (a b : Nat) (l : List Nat) (hl : a + b < l.length) (h : l[a + b] = 5) :
     l[b + a] = 5 := by
   search_test "/0/1/0/1" => "rw! [Nat.add_comm]" "rw! [add_comm]"
@@ -197,14 +194,12 @@ example (p : Prop) (h : ¬ p) : ¬ p := by
   exact h
 
 example (p q : Prop) (h : ¬ p) (h' : q) : ¬ p ∧ q := by
-  search_test => "by_contra! h₁" "by_contra! +distrib h₁"
-  -- TODO: suggest this too
+  search_test => "by_contra! h₁" "by_contra! +distrib h₁" "exact ⟨h, h'⟩"
   exact ⟨h, h'⟩
 
 example (p q : Prop) (h : p) (h' : ¬ q) : p ∨ ¬ q := by
-  search_test => "by_contra! h₁"
+  search_test => "by_contra! h₁" "exact Or.inl h"
   fail_if_success search_test => "by_contra! +distrib h₁"
-  -- TODO: suggest this too
   exact .inl h
 
 -- Test `push` and `push_neg`
