@@ -32,7 +32,7 @@ of sections of candidates, where each section corresponds to one kind of match w
 discrimination tree. -/
 @[specialize]
 def getCandidatesAux (rootExpr subExpr : Expr) (gpos : Array GrwPos) (rwKind : RwKind)
-    (report : String → BaseIO Unit)
+    (reportProgress : String → BaseIO Unit)
     (rw : Expr → MetaM (MatchResult RwLemma)) (grw : Expr → MetaM (MatchResult GrwLemma))
     (app : Expr → MetaM (MatchResult ApplyLemma)) (appAt : Expr → MetaM (MatchResult ApplyAtLemma))
     : InfoviewSearchM (Array Candidates) := do
@@ -41,10 +41,10 @@ def getCandidatesAux (rootExpr subExpr : Expr) (gpos : Array GrwPos) (rwKind : R
   depends on the following insertion order.
   We choose the order `grw` => `rw` => `apply(at)`. -/
   if !gpos.isEmpty then
-    report "grw"
+    reportProgress "grw"
     cands := cands ++ (← grw subExpr).elts.map fun _ ↦ (·.map <|
       .grw { rootExpr, subExpr, rwKind, gpos })
-  report "rw"
+  reportProgress "rw"
   let mut rwExpr := subExpr
   let mut rwPos := (← read).pos
   repeat
@@ -60,17 +60,17 @@ def getCandidatesAux (rootExpr subExpr : Expr) (gpos : Array GrwPos) (rwKind : R
     | _ => break
   if (← read).pos == .root then
     if (← read).hyp?.isSome then
-      report "apply at"
+      reportProgress "apply at"
       cands := cands ++ (← appAt rootExpr).elts.map fun _ ↦ (·.map .appAt)
     else
-      report "apply"
+      reportProgress "apply"
       cands := cands ++ (← app rootExpr).elts.map fun _ ↦ (·.map .app)
   return cands.foldr (init := #[]) fun _ val acc ↦ acc ++ val
 
 @[specialize]
-def getImportCandidates (rootExpr subExpr : Expr) (gpos : Array GrwPos)
-    (rwKind : RwKind) (report : String → BaseIO Unit) : InfoviewSearchM (Array Candidates) :=
-  getCandidatesAux rootExpr subExpr gpos rwKind report
+def getImportCandidates (rootExpr subExpr : Expr) (gpos : Array GrwPos) (rwKind : RwKind)
+    (reportProgress : String → BaseIO Unit) : InfoviewSearchM (Array Candidates) :=
+  getCandidatesAux rootExpr subExpr gpos rwKind reportProgress
     (getImportMatches rwRef) (getImportMatches grwRef)
     (getImportMatches appRef) (getImportMatches appAtRef)
 
@@ -164,13 +164,12 @@ public def librarySearchSuggestions (rootExpr subExpr : Expr)
     </div>
   computeImportDiscrTrees choice
   Core.checkInterrupted
-  -- TODO: more fine grained messages so that we can see if e.g. `rw` or `apply` is being loaded.
-  let report (tac : String) :=
+  let reportProgress (tac : String) :=
     token.set <div>
       {.element "div" #[] sections}
       <div> {.text s!"loading imported `{tac}` theorems ⏳"} </div>
       </div>
-  for cand in ← getImportCandidates rootExpr subExpr gpos rwKind report do
+  for cand in ← getImportCandidates rootExpr subExpr gpos rwKind reportProgress do
     sections := sections.push (← runSuggestions .imported cand)
 
   token.set <div>
